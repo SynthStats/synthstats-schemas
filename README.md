@@ -1,6 +1,6 @@
 # synthstats-schemas
 
-This package defines Pydantic models for SynthStats tasks, traces and rewards.
+This package checks the structure of SynthStats task, trace and reward records with Pydantic, a Python library for validating data.
 
 ## Install
 
