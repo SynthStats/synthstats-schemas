@@ -13,35 +13,47 @@
 
 # synthstats-schemas
 
-This package checks the structure of SynthStats task, trace and reward records with Pydantic, a Python library for validating data.
+Pydantic schemas for SynthStats tasks, trajectories, rewards and receipts.
 
 ## Install
 
-Run these commands from the repository root.
-
-```sh
-uv sync
+```bash
+uv venv --python 3.12
+uv pip install .
 ```
+
+Run these commands from this repository's checkout.
 
 ## Example
 
-```sh
-uv run python - <<'PY'
-from synthstats_schemas import TaskManifest
+```bash
+.venv/bin/python - <<'PY'
+from synthstats_schemas import canonical_json, parse_task_contract
 
-task = TaskManifest(task_id="coin-toss", name="Coin toss", version="1")
-print(task.model_dump_json())
+contract = parse_task_contract('''{
+  "schema_version": "synthstats.task_contract.v2",
+  "language": "pymc",
+  "entry_point": {"function": "model", "parameter": "data", "returns": "pymc.Model"},
+  "data": {
+    "container": "dict", "column_type": "numpy.ndarray",
+    "row_count_key": "n", "keys": ["x", "y"], "target_key": "y"
+  },
+  "provided_names": {"pm": "pymc", "np": "numpy"},
+  "allowed_imports": [],
+  "conventions": [],
+  "environment": {
+    "image_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "python": "3.12", "packages": {}
+  },
+  "interaction": {"mode": "pool", "query_budget": 3, "observation_key": "y"}
+}''')
+encoded = canonical_json(contract)
+assert parse_task_contract(encoded) == contract
+print(contract.interaction_mode)  # pool
 PY
 ```
 
-## Modules
+## Optional dependencies
 
-| Module | Contents |
-| --- | --- |
-| `synthstats_schemas.task` | Task manifests |
-| `synthstats_schemas.trace` | Trace records |
-| `synthstats_schemas.reward` | Reward records |
-
-[SynthStats](https://synthstats.org)
-
-The [MIT Licence](LICENSE) applies.
+The read-only W&B project probe needs `uv pip install '.[wandb]'`.
+Tests need `uv pip install '.[test]'`, then `.venv/bin/pytest`.

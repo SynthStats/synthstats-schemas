@@ -1,16 +1,16 @@
-"""Contracts for choosing one of N candidate programs generated across model
-families for supervised fine-tuning (SFT).
+"""Candidate-selection contracts for multi-family best-of-N SFT generation.
 
-ELPD means expected log predictive density, a score for predictive fit.
-A selection record documents the checks and scores used for ELPD-guided
-selection of one program from a candidate population:
+A selection record is the audit trail for choosing one program out of a
+candidate population. It records the invariants of ELPD-guided
+selection:
 
 - no candidate enters fitness ranking unless it passes the cheap crash gate,
   every integrity gate, and every density-degeneracy gate (eligibility first);
-- ranking is enabled only when ``holdout_n >= MIN_HOLDOUT_FOR_SELECTION``;
-  below that threshold, the record stores eligibility without ranking;
-- the ranking margin uses a bootstrap confidence interval that accounts for
-  posterior draws, held-out observations and repeated data splits.
+- argmax over candidates only fires when the held-out split is large enough to
+  rank trustworthily (``holdout_n >= MIN_HOLDOUT_FOR_SELECTION``); below that the
+  candidate is kept gate-only, without ranking;
+- the ranking margin is a bootstrap CI over (draws x holdout rows) and repeated
+  splits, not Monte-Carlo standard error alone.
 
 The same record serves the PyMC and LazyPPL selection verifiers.
 """
@@ -114,8 +114,7 @@ class SourcePlanCard(ContractModel):
     """Private generation-time structural plan for one task.
 
     Never serialized into the trainee-visible prompt (it would leak the intended
-    distribution family); it drives the generator and the validation recipe so
-    richness is planned, not hoped for. ``n_floor`` raises the EnvSpec
+    distribution family); it configures the generator and validation recipe. ``n_floor`` raises the EnvSpec
     observation count for selection-intended tasks so the held-out split is large
     enough to rank.
     """

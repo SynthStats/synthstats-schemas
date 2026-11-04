@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
+from pathlib import Path
 from typing import Annotated, Any, Final, Literal
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator, with_config
+from typing_extensions import TypedDict
 
 from synthstats_schemas.base import ContractModel, require_json_serializable
+from synthstats_schemas.reward import (
+    TruthOwner,
+    ensure_reward_source_registered,
+    ensure_reward_source_trainable,
+)
 
 TRAINING_RECEIPT_SCHEMA_VERSION: Final[Literal["synthstats.training_receipt.v1"]] = (
     "synthstats.training_receipt.v1"
@@ -25,8 +34,17 @@ NonNegativeInt = Annotated[int, Field(ge=0)]
 PositiveInt = Annotated[int, Field(ge=1)]
 NonNegativeFloat = Annotated[float, Field(ge=0.0)]
 
-RunnerType = Literal["sft", "offline_rescore", "skyrl", "tinker", "grpo_tinker"]
-ObjectiveLossType = Literal["sft", "tb", "subtb", "drgrpo"]
+_REWARD_CONSUMPTION_KEYS: Final[frozenset[str]] = frozenset(
+    {
+        "consumed_reward_evidence",
+        "consumed_reward_sources",
+        "reward_component_source_counts",
+        "reward_source_counts",
+    }
+)
+
+RunnerType = Literal["sft", "offline_rescore", "skyrl", "tinker"]
+ObjectiveLossType = Literal["sft", "tb", "subtb"]
 BundleCapability = Literal[
     "sft_warmstart",
     "offline_current_policy_tb_rescore",
@@ -36,6 +54,8 @@ BundleCapability = Literal[
     "tinker_provider_sft",
     "tinker_provider_tb",
     "tinker_provider_subtb",
+    "bedrock_heuristic_review",
+    "independent_review",
     "release_grade_mixed_atif",
     "producer_data_reward_pipeline",
     "producer_fresh_provider_generation",
@@ -44,8 +64,12 @@ BundleCapability = Literal[
 ]
 EvidenceReceiptKind = Literal[
     "fresh_provider_generation",
+    "bedrock_heuristic_review",
+    "oracle_review",
+    "independent_review",
     "direct_fixed_logprob_subtb_replay",
 ]
+ReviewVerdict = Literal["GO", "NO-GO"]
 CleanupReceiptKind = Literal[
     "sky_status_clean",
     "json_empty_collection",
@@ -55,6 +79,19 @@ CleanupReceiptKind = Literal[
 ]
 SecretScanKind = Literal["json_ok_zero_findings", "empty_text"]
 BundleFileKind = Literal["release_manifest"]
+
+_RUNNER_OBJECTIVES: Final[dict[RunnerType, frozenset[ObjectiveLossType]]] = {
+    "sft": frozenset({"sft"}),
+    "offline_rescore": frozenset({"tb", "subtb"}),
+    "skyrl": frozenset({"tb", "subtb"}),
+    "tinker": frozenset({"sft", "tb", "subtb"}),
+}
+
+
+@with_config(ConfigDict(extra="forbid"))
+class TrainingReceiptManifestEntry(TypedDict):
+    sha256: Sha256
+    size_bytes: NonNegativeInt
 
 
 def _validate_jsonish(value: Any, *, field_name: str) -> Any:
@@ -83,6 +120,79 @@ def _reject_non_finite(value: Any, *, field_name: str) -> None:
             _reject_non_finite(item, field_name=field_name)
         return
     raise ValueError(f"{field_name} must be JSON-compatible")
+
+
+def _reject_alternate_reward_consumption(value: Any, *, field_name: str) -> None:
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            _reject_alternate_reward_consumption(
+                item,
+                field_name=f"{field_name}[{index}]",
+            )
+        return
+    if not isinstance(value, dict):
+        return
+    reserved = _REWARD_CONSUMPTION_KEYS.intersection(value)
+    if reserved:
+        names = ", ".join(sorted(reserved))
+        raise ValueError(
+            f"{field_name} contains reserved reward-consumption fields: {names}"
+        )
+    for key, item in value.items():
+        _reject_alternate_reward_consumption(
+            item,
+            field_name=f"{field_name}.{key}",
+        )
+
+
+def _validate_canonical_relative_posix_path(value: str, *, field_name: str) -> str:
+    if "\x00" in value:
+        raise ValueError(f"{field_name} must not contain NUL")
+    if (
+        value.startswith("/")
+        or value.endswith("/")
+        or "\\" in value
+        or any(segment in {"", ".", ".."} for segment in value.split("/"))
+    ):
+        raise ValueError(f"{field_name} must be a canonical POSIX-relative path")
+    return value
+
+
+def _manifest_sha256(manifest: dict[str, TrainingReceiptManifestEntry]) -> str:
+    payload = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
+    return hashlib.sha256(payload).hexdigest()
+
+
+class SFTSplitBinding(ContractModel):
+    path: NonEmptyStr
+    resolved_path: NonEmptyStr
+    sha256: Sha256
+    row_count: NonNegativeInt
+
+    @field_validator("path")
+    @classmethod
+    def configured_path_is_safe(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("path must not contain NUL")
+        if Path(value).is_absolute():
+            return value
+        return _validate_canonical_relative_posix_path(value, field_name="path")
+
+    @field_validator("resolved_path")
+    @classmethod
+    def resolved_path_is_absolute(cls, value: str) -> str:
+        if "\x00" in value or not Path(value).is_absolute():
+            raise ValueError("resolved_path must be an absolute NUL-free path")
+        return value
+
+
+@with_config(ConfigDict(extra="forbid"))
+class SFTSplitBindings(TypedDict):
+    train: SFTSplitBinding
+    validation: SFTSplitBinding
+    test: SFTSplitBinding
 
 
 class SourceProvenance(ContractModel):
@@ -116,12 +226,37 @@ class TrainingReceiptRunner(ContractModel):
     configured_type: str | None = None
 
 
+class TrainingReceiptConsumedRewardEvidence(ContractModel):
+    reward_source_counts: dict[NonEmptyStr, PositiveInt]
+    reward_component_source_counts: dict[NonEmptyStr, PositiveInt] | None = None
+
+    @field_validator("reward_source_counts", "reward_component_source_counts")
+    @classmethod
+    def reward_sources_are_trainable(
+        cls, value: dict[str, int] | None
+    ) -> dict[str, int] | None:
+        if value is None:
+            return None
+        for source in value:
+            ensure_reward_source_trainable(source)
+        return value
+
+
 class TrainingReceiptDataset(ContractModel):
     path: str | None = None
     resolved_path: str | None = None
     row_count: NonNegativeInt
     train_rows: NonNegativeInt
     sha256: Sha256 | None = None
+    sft_split_bindings: SFTSplitBindings | None = None
+    sft_release_manifest_path: NonEmptyStr | None = None
+    resolved_sft_release_manifest_path: NonEmptyStr | None = None
+    sft_release_manifest_sha256: Sha256 | None = None
+    sft_release_manifest_schema_version: Literal["synthstats.sft_release.v1"] | None = (
+        None
+    )
+    sft_release_manifest_row_count: PositiveInt | None = None
+    sft_release_manifest_split_group_count: PositiveInt | None = None
     file_manifest_sha256: Sha256 | None = None
     file_count: NonNegativeInt | None = None
     total_bytes: NonNegativeInt | None = None
@@ -131,15 +266,51 @@ class TrainingReceiptDataset(ContractModel):
     unique_atif_ids_consumed_count: NonNegativeInt | None = None
     reward_stats: dict[str, Any] | None = None
     available_reward_evidence: dict[str, Any] | None = None
-    consumed_reward_evidence: dict[str, Any] | None = None
+    consumed_reward_evidence: TrainingReceiptConsumedRewardEvidence | None = None
     reward_evidence: dict[str, Any] | None = None
     consumed_reward_sources: list[NonEmptyStr] | None = None
     atif_manifest_count_exported: NonNegativeInt | None = None
 
+    @field_validator("sft_release_manifest_path")
+    @classmethod
+    def sft_release_manifest_path_is_safe(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if "\x00" in value:
+            raise ValueError("sft_release_manifest_path must not contain NUL")
+        if Path(value).is_absolute():
+            return value
+        return _validate_canonical_relative_posix_path(
+            value,
+            field_name="sft_release_manifest_path",
+        )
+
+    @field_validator("resolved_sft_release_manifest_path")
+    @classmethod
+    def resolved_sft_release_manifest_path_is_absolute(
+        cls, value: str | None
+    ) -> str | None:
+        if value is None:
+            return None
+        if "\x00" in value or not Path(value).is_absolute():
+            raise ValueError(
+                "resolved_sft_release_manifest_path must be an absolute NUL-free path"
+            )
+        return value
+
+    @field_validator("consumed_reward_sources")
+    @classmethod
+    def consumed_reward_sources_are_trainable(
+        cls, value: list[str] | None
+    ) -> list[str] | None:
+        if value is not None:
+            for source in value:
+                ensure_reward_source_trainable(source)
+        return value
+
     @field_validator(
         "reward_stats",
         "available_reward_evidence",
-        "consumed_reward_evidence",
         "reward_evidence",
     )
     @classmethod
@@ -169,6 +340,43 @@ class TrainingReceiptDataset(ContractModel):
             if observed > self.row_count:
                 raise ValueError(
                     "unique_atif_ids_consumed_count must not exceed row_count"
+                )
+
+        evidence = self.consumed_reward_evidence
+        sources = self.consumed_reward_sources
+        if evidence is None and sources is None:
+            return self
+        if evidence is None or sources is None:
+            raise ValueError(
+                "consumed_reward_evidence and consumed_reward_sources must be "
+                "declared together"
+            )
+        if len(sources) != len(set(sources)):
+            raise ValueError("consumed_reward_sources must not contain duplicates")
+        if set(evidence.reward_source_counts) != set(sources):
+            raise ValueError(
+                "consumed_reward_evidence.reward_source_counts keys must exactly "
+                "match consumed_reward_sources"
+            )
+        if sum(evidence.reward_source_counts.values()) != self.train_rows:
+            raise ValueError(
+                "consumed_reward_evidence.reward_source_counts values must sum "
+                "to train_rows"
+            )
+        composite_count = evidence.reward_source_counts.get(
+            "heuristic.composite_reward", 0
+        )
+        if composite_count:
+            component_counts = evidence.reward_component_source_counts
+            if not component_counts:
+                raise ValueError(
+                    "consumed_reward_evidence.reward_component_source_counts is "
+                    "required for heuristic.composite_reward"
+                )
+            if sum(component_counts.values()) < composite_count:
+                raise ValueError(
+                    "consumed_reward_evidence.reward_component_source_counts must "
+                    "cover heuristic.composite_reward rows"
                 )
         return self
 
@@ -216,7 +424,6 @@ class TrainingReceiptObjective(ContractModel):
             "sft": {"sft", "sft_mle"},
             "tb": {"tb", "gfn_tb"},
             "subtb": {"subtb", "gfn_subtb"},
-            "drgrpo": {"drgrpo"},
         }[self.loss_type]
         if self.loss_name not in expected:
             raise ValueError("loss_name must match loss_type")
@@ -269,10 +476,10 @@ class TrainingReceiptArtifacts(ContractModel):
     dataset_manifest: str | None = None
     checkpoints: list[NonEmptyStr]
     final_checkpoint: NonEmptyStr
+    final_manifest: dict[NonEmptyStr, TrainingReceiptManifestEntry]
+    final_manifest_sha256: Sha256
     policy_weight_change_report: str | None = None
     policy_weight_change_report_sha256: Sha256 | None = None
-    weight_change_report: str | None = None
-    weight_change_report_sha256: Sha256 | None = None
     checkpoint_state: str | None = None
     replay_buffer_state: str | None = None
     replay_buffer_state_sha256: Sha256 | None = None
@@ -297,10 +504,49 @@ class TrainingReceiptArtifacts(ContractModel):
             return None
         return _validate_jsonish(value, field_name=getattr(info, "field_name", "state"))
 
+    @field_validator("checkpoints")
+    @classmethod
+    def checkpoint_paths_are_canonical(cls, value: list[str]) -> list[str]:
+        return [
+            _validate_canonical_relative_posix_path(
+                path,
+                field_name="checkpoints entry",
+            )
+            for path in value
+        ]
+
+    @field_validator("final_checkpoint")
+    @classmethod
+    def final_checkpoint_path_is_canonical(cls, value: str) -> str:
+        return _validate_canonical_relative_posix_path(
+            value,
+            field_name="final_checkpoint",
+        )
+
+    @field_validator("final_manifest")
+    @classmethod
+    def final_manifest_is_strict(
+        cls,
+        value: dict[str, TrainingReceiptManifestEntry],
+    ) -> dict[str, TrainingReceiptManifestEntry]:
+        if not value:
+            raise ValueError("final_manifest must not be empty")
+        for path, entry in value.items():
+            _validate_canonical_relative_posix_path(
+                path,
+                field_name="final_manifest path",
+            )
+        return value
+
     @model_validator(mode="after")
     def final_checkpoint_is_declared(self) -> "TrainingReceiptArtifacts":
         if self.final_checkpoint not in self.checkpoints:
             raise ValueError("final_checkpoint must be listed in checkpoints")
+        expected = _manifest_sha256(self.final_manifest)
+        if self.final_manifest_sha256 != expected:
+            raise ValueError(
+                "final_manifest_sha256 must match compact sorted final_manifest JSON"
+            )
         return self
 
 
@@ -374,6 +620,32 @@ class TrainingReceipt(ContractModel):
     checkpoint_state: dict[str, Any] | None = None
     provider: TrainingReceiptProvider | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def reward_consumption_uses_only_canonical_dataset_fields(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        for field_name, field_value in value.items():
+            if field_name != "dataset":
+                _reject_alternate_reward_consumption(
+                    field_value,
+                    field_name=field_name,
+                )
+                continue
+            if not isinstance(field_value, dict):
+                continue
+            for dataset_field, dataset_value in field_value.items():
+                if dataset_field in {
+                    "consumed_reward_evidence",
+                    "consumed_reward_sources",
+                }:
+                    continue
+                _reject_alternate_reward_consumption(
+                    dataset_value,
+                    field_name=f"dataset.{dataset_field}",
+                )
+        return value
+
     @field_validator("metrics", "environment", "generator", "checkpoint_state")
     @classmethod
     def dynamic_payloads_are_jsonish(cls, value: Any, info: object) -> Any:
@@ -386,8 +658,135 @@ class TrainingReceipt(ContractModel):
     @model_validator(mode="after")
     def runner_specific_evidence_is_present(self) -> "TrainingReceipt":
         runner_type = self.runner.type
+        loss_type = self.objective.loss_type
+        if loss_type not in _RUNNER_OBJECTIVES[runner_type]:
+            raise ValueError(
+                f"runner {runner_type!r} does not support objective {loss_type!r}"
+            )
+        sft_lineage_fields = (
+            "sft_release_manifest_path",
+            "resolved_sft_release_manifest_path",
+            "sft_release_manifest_sha256",
+            "sft_release_manifest_schema_version",
+            "sft_release_manifest_row_count",
+            "sft_release_manifest_split_group_count",
+        )
+        sft_lineage_values = {
+            field_name: getattr(self.dataset, field_name)
+            for field_name in sft_lineage_fields
+        }
+        if loss_type == "sft":
+            split_bindings = self.dataset.sft_split_bindings
+            if split_bindings is None:
+                raise ValueError("SFT receipts require dataset.sft_split_bindings")
+
+            train_binding = split_bindings["train"]
+            train_identity_fields = ("path", "resolved_path", "sha256")
+            missing_train_identity = sorted(
+                field_name
+                for field_name in train_identity_fields
+                if getattr(self.dataset, field_name) is None
+            )
+            if missing_train_identity:
+                raise ValueError(
+                    "SFT receipts require dataset train identity fields: "
+                    + ", ".join(missing_train_identity)
+                )
+            mismatched_train_identity = sorted(
+                field_name
+                for field_name in train_identity_fields
+                if getattr(self.dataset, field_name)
+                != getattr(train_binding, field_name)
+            )
+            if mismatched_train_identity:
+                raise ValueError(
+                    "SFT dataset train identity must match "
+                    "dataset.sft_split_bindings.train: "
+                    + ", ".join(mismatched_train_identity)
+                )
+            if not (
+                self.dataset.row_count == self.dataset.train_rows >= 1
+                and self.dataset.train_rows <= train_binding.row_count
+            ):
+                raise ValueError(
+                    "SFT dataset row_count and train_rows must be equal, positive, "
+                    "and no greater than sft_split_bindings.train.row_count"
+                )
+            if (
+                self.dataset.max_examples is not None
+                and self.dataset.row_count > self.dataset.max_examples
+            ):
+                raise ValueError(
+                    "SFT dataset row_count must not exceed dataset.max_examples"
+                )
+
+            missing = sorted(
+                field_name
+                for field_name, value in sft_lineage_values.items()
+                if value is None
+            )
+            if missing:
+                raise ValueError(
+                    "SFT receipts require release-manifest lineage: "
+                    + ", ".join(missing)
+                )
+            release_row_count = self.dataset.sft_release_manifest_row_count
+            split_group_count = self.dataset.sft_release_manifest_split_group_count
+            if release_row_count is None or split_group_count is None:
+                raise ValueError("SFT receipts require release-manifest counts")
+            split_binding_row_count = sum(
+                split_bindings[split].row_count
+                for split in ("train", "validation", "test")
+            )
+            if split_binding_row_count > release_row_count:
+                raise ValueError(
+                    "SFT dataset.sft_split_bindings row counts must not exceed "
+                    "release row count"
+                )
+            if not (
+                release_row_count
+                >= self.dataset.row_count
+                >= self.dataset.train_rows
+                >= 1
+            ):
+                raise ValueError(
+                    "SFT release and dataset counts must satisfy "
+                    "release rows >= dataset rows >= training rows >= 1"
+                )
+            if split_group_count > release_row_count:
+                raise ValueError(
+                    "SFT release split-group count must not exceed release row count"
+                )
+        else:
+            if self.dataset.sft_split_bindings is not None:
+                raise ValueError(
+                    "non-SFT receipts must not declare dataset.sft_split_bindings"
+                )
+            present = sorted(
+                field_name
+                for field_name, value in sft_lineage_values.items()
+                if value is not None
+            )
+            if present:
+                raise ValueError(
+                    "non-SFT receipts must not declare SFT release-manifest lineage: "
+                    + ", ".join(present)
+                )
+        if self.objective.loss_type != "sft":
+            if self.dataset.train_rows < 1:
+                raise ValueError(
+                    "reward-consuming receipts require positive train_rows"
+                )
+            if (
+                self.dataset.consumed_reward_evidence is None
+                or self.dataset.consumed_reward_sources is None
+            ):
+                raise ValueError(
+                    "reward-consuming receipts require canonical dataset reward "
+                    "consumption evidence"
+                )
         if (
-            runner_type in {"sft", "offline_rescore", "tinker", "grpo_tinker"}
+            runner_type in {"sft", "offline_rescore", "tinker"}
             and not self.dataset.path
         ):
             raise ValueError(f"{runner_type} receipts require dataset.path")
@@ -403,17 +802,6 @@ class TrainingReceipt(ContractModel):
                 raise ValueError("Tinker receipts require provider.name='tinker'")
             if self.artifacts.final_tinker_remote_state is None:
                 raise ValueError("Tinker receipts require final_tinker_remote_state")
-        if runner_type == "grpo_tinker":
-            if self.provider is None or self.provider.name != "tinker":
-                raise ValueError("GRPO Tinker receipts require provider.name='tinker'")
-            if self.artifacts.initial_tinker_sampler_weights is None:
-                raise ValueError(
-                    "GRPO Tinker receipts require initial_tinker_sampler_weights"
-                )
-            if self.artifacts.final_tinker_sampler_weights is None:
-                raise ValueError(
-                    "GRPO Tinker receipts require final_tinker_sampler_weights"
-                )
         return self
 
 
@@ -576,7 +964,16 @@ _CAPABILITY_VALIDATION_REQUIREMENTS: dict[str, dict[str, Any]] = {
 def get_capability_validation_requirements(
     capability: BundleCapability,
 ) -> dict[str, Any]:
-    return dict(_CAPABILITY_VALIDATION_REQUIREMENTS.get(capability, {}))
+    try:
+        requirements = _CAPABILITY_VALIDATION_REQUIREMENTS[capability]
+    except KeyError:
+        raise ValueError(
+            f"no validation requirements are declared for capability "
+            f"{capability!r}: a bundle entry declaring it must be refused, not "
+            "silently admitted with no requirements; tier the capability in "
+            "_CAPABILITY_VALIDATION_REQUIREMENTS or retire it"
+        ) from None
+    return dict(requirements)
 
 
 def _config_satisfies_requirement(
@@ -678,6 +1075,18 @@ class BundleEvidenceReceiptEntry(ContractModel):
     require_zero_provider_failures: bool = False
     expected_provider_backend: NonEmptyStr | None = None
     expected_completion_model: NonEmptyStr | None = None
+    model_id: NonEmptyStr | None = None
+    route: NonEmptyStr | None = None
+    region: NonEmptyStr | None = None
+    request_id: NonEmptyStr | None = None
+    response_id: NonEmptyStr | None = None
+    prompt_sha256: Sha256 | None = None
+    output_sha256: Sha256 | None = None
+    heuristic_only: bool = False
+    classification: NonEmptyStr | None = None
+    review_verdict: ReviewVerdict | None = None
+    unresolved_p0_count: NonNegativeInt | None = None
+    unresolved_p1_count: NonNegativeInt | None = None
     derived_manifest: NonEmptyStr | None = None
     derived_manifest_sha256: Sha256 | None = None
     steps: NonEmptyStr | None = None
@@ -691,9 +1100,25 @@ class BundleEvidenceReceiptEntry(ContractModel):
     require_objective_marker: bool = False
     require_fixed_logprob_boundary: bool = False
     expected_reward_source: NonEmptyStr | None = None
-    expected_truth_owner: NonEmptyStr | None = None
+    expected_truth_owner: TruthOwner | None = None
     expected_source_rollout_tensor_artifact_sha256: Sha256 | None = None
     semantic_validation_settings: SemanticValidationSettings | None = None
+
+    @field_validator("expected_reward_source")
+    @classmethod
+    def expected_reward_source_is_registered(cls, value: str | None) -> str | None:
+        if value is not None:
+            ensure_reward_source_registered(value)
+        return value
+
+    @field_validator("expected_truth_owner", mode="before")
+    @classmethod
+    def expected_truth_owner_accepts_wire_string(cls, value: Any) -> Any:
+        if value is None or isinstance(value, TruthOwner):
+            return value
+        if isinstance(value, str):
+            return TruthOwner(value)
+        return value
 
     @model_validator(mode="after")
     def evidence_kind_is_fail_closed(self) -> "BundleEvidenceReceiptEntry":
@@ -722,6 +1147,41 @@ class BundleEvidenceReceiptEntry(ContractModel):
             if missing:
                 raise ValueError(
                     "fresh_provider_generation evidence requires: " + ", ".join(missing)
+                )
+        if self.kind in {"bedrock_heuristic_review", "oracle_review", "independent_review"}:
+            missing = []
+            if self.model_id is None:
+                missing.append("model_id")
+            if self.route is None:
+                missing.append("route")
+            if self.output_sha256 is None:
+                missing.append("output_sha256")
+            if not self.heuristic_only:
+                missing.append("heuristic_only")
+            if self.classification is None:
+                missing.append("classification")
+            if self.review_verdict is None:
+                missing.append("review_verdict")
+            elif self.review_verdict != "GO":
+                missing.append("review_verdict=GO")
+            if self.unresolved_p0_count is None:
+                missing.append("unresolved_p0_count")
+            elif self.unresolved_p0_count != 0:
+                missing.append("unresolved_p0_count=0")
+            if self.unresolved_p1_count is None:
+                missing.append("unresolved_p1_count")
+            elif self.unresolved_p1_count != 0:
+                missing.append("unresolved_p1_count=0")
+            if self.kind == "bedrock_heuristic_review":
+                if self.region is None:
+                    missing.append("region")
+                if self.request_id is None:
+                    missing.append("request_id")
+                if self.prompt_sha256 is None:
+                    missing.append("prompt_sha256")
+            if missing:
+                raise ValueError(
+                    f"{self.kind} evidence requires: " + ", ".join(missing)
                 )
         if self.kind == "direct_fixed_logprob_subtb_replay":
             missing = []
@@ -758,8 +1218,20 @@ class BundleEvidenceReceiptEntry(ContractModel):
                 missing.append("require_fixed_logprob_boundary")
             if self.expected_reward_source is None:
                 missing.append("expected_reward_source")
+                expected_reward_source = None
+            else:
+                expected_reward_source = ensure_reward_source_trainable(
+                    self.expected_reward_source
+                )
             if self.expected_truth_owner is None:
                 missing.append("expected_truth_owner")
+            elif (
+                expected_reward_source is not None
+                and self.expected_truth_owner is not expected_reward_source.truth_owner
+            ):
+                raise ValueError(
+                    "expected_truth_owner must match expected_reward_source catalog owner"
+                )
             if self.expected_source_rollout_tensor_artifact_sha256 is None:
                 missing.append("expected_source_rollout_tensor_artifact_sha256")
             if missing:

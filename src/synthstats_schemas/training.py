@@ -1,6 +1,4 @@
-"""Contracts for token-aligned action sequences used in trajectory balance (TB)
-and subtrajectory balance (SubTB) training.
-"""
+"""Tensor-ready TB/SubTB training trajectory contracts."""
 
 from __future__ import annotations
 

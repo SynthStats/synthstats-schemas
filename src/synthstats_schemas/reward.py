@@ -1,4 +1,4 @@
-"""Reward provenance and reward artefact contracts."""
+"""Reward provenance and reward artifact contracts."""
 
 from __future__ import annotations
 
@@ -57,8 +57,54 @@ class RewardScalarizationMethod(StrEnum):
     manual = "manual"
 
 
+class Disposition(StrEnum):
+    """Canonical verifier trial disposition across Harbor, schemas, and gates."""
+
+    scored = "scored"
+    refused = "refused"
+    unjudged = "unjudged"
+    # The trial never produced a reward because our infrastructure failed
+    # (a timeout, a resource fault, an unresolved execution, an unreliable
+    # sampler). Null values exclude infrastructure faults from training and scoring.
+    infrastructure = "infrastructure"
+
+
+UNJUDGED_REASON_CODES: Final[frozenset[str]] = frozenset(
+    {
+        "task_data_invalid",
+        "task_score_metadata_invalid",
+        "invalid_reward_reference",
+        "reference_transform_nonfinite",
+        "verifier_contract_failure",
+        "verifier_l5_error",
+        "verifier_timeout",
+        "verifier_resource_failure",
+        "verifier_execution_unresolved",
+        "verifier_predictive_call_error",
+        "failure_origin_unresolved",
+        "unsupported_verifier_profile",
+        "sampler_unreliable",
+        "metric_unavailable",
+    }
+)
+
+INFRASTRUCTURE_REASON_CODES: Final[frozenset[str]] = frozenset(
+    {
+        "verifier_timeout",
+        "verifier_resource_failure",
+        "verifier_execution_unresolved",
+        "verifier_predictive_call_error",
+        "sampler_unreliable",
+    }
+)
+
+
 class RewardSourceNotRegisteredError(ValueError):
     """Raised when a reward artifact names an unknown reward source."""
+
+
+class RewardSourceNotTrainableError(ValueError):
+    """Raised when a registered reward source must not drive training."""
 
 
 def _tuple_from_json_array(value: Any) -> tuple[Any, ...]:
@@ -77,12 +123,41 @@ def _enum_from_wire_string(value: Any, enum_type: type[StrEnum]) -> Any:
     return value
 
 
+def _reject_non_finite_json(value: Any, *, field_name: str) -> None:
+    if isinstance(value, bool) or value is None:
+        return
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError(f"{field_name} must not contain non-finite floats")
+        return
+    if isinstance(value, int | str):
+        return
+    if isinstance(value, list):
+        for item in value:
+            _reject_non_finite_json(item, field_name=field_name)
+        return
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if not isinstance(key, str) or not key:
+                raise ValueError(f"{field_name} object keys must be non-empty strings")
+            _reject_non_finite_json(item, field_name=field_name)
+        return
+    raise ValueError(f"{field_name} must be JSON-compatible")
+
+
+def _validate_jsonish(value: Any, *, field_name: str) -> Any:
+    require_json_serializable(value, field_name=field_name)
+    _reject_non_finite_json(value, field_name=field_name)
+    return value
+
+
 class RewardSourceSpec(ContractModel):
     """Immutable provenance declaration for one reward source."""
 
     name: Annotated[str, Field(min_length=1)]
     evidence_kind: EvidenceKind
     truth_owner: TruthOwner
+    trainable: bool
     allowed_producers: tuple[Annotated[str, Field(min_length=1)], ...]
     description: str = ""
 
@@ -140,11 +215,39 @@ class RewardSourceSpec(ContractModel):
 
 _CATALOG_SPECS: Final[tuple[RewardSourceSpec, ...]] = (
     RewardSourceSpec(
+        name="validation.pymc_elpd",
+        evidence_kind=EvidenceKind.verifier,
+        truth_owner=TruthOwner.verifier,
+        trainable=False,
+        allowed_producers=("ppl_synth_data.harbor.pymc_verifier",),
+        description="Historical PyMC verifier reward from bounded baseline-normalized ELPD.",
+    ),
+    RewardSourceSpec(
+        name="validation.lazyppl_elpd",
+        evidence_kind=EvidenceKind.verifier,
+        truth_owner=TruthOwner.verifier,
+        trainable=False,
+        allowed_producers=(
+            "ppl_synth_data.docker.lazyppl_harbor.score",
+            "ppl_synth_data.harbor.lazyppl_verifier",
+        ),
+        description="Historical LazyPPL verifier reward from bounded baseline-normalized ELPD.",
+    ),
+    RewardSourceSpec(
+        name="validation.pymc_semantic_holdout_logp",
+        evidence_kind=EvidenceKind.verifier,
+        truth_owner=TruthOwner.verifier,
+        trainable=False,
+        allowed_producers=("ppl_synth_data.validation.pymc_semantics",),
+        description="Historical PyMC semantic holdout log-probability verifier reward.",
+    ),
+    RewardSourceSpec(
         name="validation.compilation",
         evidence_kind=EvidenceKind.verifier,
         truth_owner=TruthOwner.verifier,
+        trainable=True,
         allowed_producers=(
-            "ppl_synth_data.eval.sandbox.trivial",
+            "ppl_synth_data.validation.compilation",
             "ppl_synth_data.harbor.validator_template",
         ),
         description="Compilation or type-check verifier reward.",
@@ -153,80 +256,44 @@ _CATALOG_SPECS: Final[tuple[RewardSourceSpec, ...]] = (
         name="validation.formatting",
         evidence_kind=EvidenceKind.verifier,
         truth_owner=TruthOwner.verifier,
-        allowed_producers=("ppl_synth_data.harbor.validator_template",),
+        trainable=True,
+        allowed_producers=(
+            "ppl_synth_data.validation.formatting",
+            "ppl_synth_data.harbor.validator_template",
+        ),
         description="Structured-output formatting verifier reward.",
-    ),
-    RewardSourceSpec(
-        name="validation.pymc_semantic_holdout_logp",
-        evidence_kind=EvidenceKind.verifier,
-        truth_owner=TruthOwner.verifier,
-        allowed_producers=("ppl_synth_data.validation.pymc_semantics",),
-        description="PyMC semantic holdout log-probability verifier reward.",
-    ),
-    RewardSourceSpec(
-        name="validation.pymc_elpd",
-        evidence_kind=EvidenceKind.verifier,
-        truth_owner=TruthOwner.verifier,
-        allowed_producers=("ppl_synth_data.harbor.validator_template",),
-        description="PyMC held-out expected log predictive density verifier reward.",
-    ),
-    RewardSourceSpec(
-        name="validation.lazyppl_elpd",
-        evidence_kind=EvidenceKind.verifier,
-        truth_owner=TruthOwner.verifier,
-        allowed_producers=("ppl_synth_data.docker.lazyppl_harbor.score",),
-        description="LazyPPL expected log predictive density verifier reward.",
     ),
     RewardSourceSpec(
         name="validation.expected_information_gain",
         evidence_kind=EvidenceKind.verifier,
         truth_owner=TruthOwner.verifier,
-        allowed_producers=("ppl_synth_data.eval.orchestrator",),
+        trainable=True,
+        allowed_producers=(
+            "ppl_synth_data.eval.metrics.eig",
+            "ppl_synth_data.eval.orchestrator",
+        ),
         description="Verifier-owned Bayesian expected information gain reward.",
-    ),
-    RewardSourceSpec(
-        name="validation.predictive_metric",
-        evidence_kind=EvidenceKind.verifier,
-        truth_owner=TruthOwner.verifier,
-        allowed_producers=("ppl_synth_data.eval.orchestrator",),
-        description="Verifier-owned predictive-quality metric reward.",
     ),
     RewardSourceSpec(
         name="heuristic.llm_rubric",
         evidence_kind=EvidenceKind.heuristic,
         truth_owner=TruthOwner.heuristic,
+        trainable=True,
         allowed_producers=(
-            "ppl_synth_data.reward.scalarization",
-            "ppl_synth_data.dataset.rich_reward_export",
+            "ppl_synth_data.validation.llm_rubric",
+            "ppl_synth_data.eval.rubrics.llm",
         ),
-        description="LLM rubric score for a synthesis trace.",
-    ),
-    RewardSourceSpec(
-        name="heuristic.pymc_elpd_error",
-        evidence_kind=EvidenceKind.heuristic,
-        truth_owner=TruthOwner.heuristic,
-        allowed_producers=("ppl_synth_data.harbor.validator_template",),
-        description="Heuristic floor for a PyMC ELPD scoring error.",
-    ),
-    RewardSourceSpec(
-        name="heuristic.lazyppl_elpd_error",
-        evidence_kind=EvidenceKind.heuristic,
-        truth_owner=TruthOwner.heuristic,
-        allowed_producers=("ppl_synth_data.docker.lazyppl_harbor.score",),
-        description="Heuristic floor for a LazyPPL ELPD scoring error.",
-    ),
-    RewardSourceSpec(
-        name="heuristic.no_submission",
-        evidence_kind=EvidenceKind.heuristic,
-        truth_owner=TruthOwner.heuristic,
-        allowed_producers=("ppl_synth_data.eval.orchestrator",),
-        description="Terminal heuristic reward for a trial without a submission.",
+        description="LLM rubric or critique-derived heuristic reward.",
     ),
     RewardSourceSpec(
         name="heuristic.expected_information_gain_proxy",
         evidence_kind=EvidenceKind.heuristic,
         truth_owner=TruthOwner.heuristic,
-        allowed_producers=("ppl_synth_data.dataset.rich_reward_export",),
+        trainable=True,
+        allowed_producers=(
+            "ppl_synth_data.validation.process_information_gain",
+            "ppl_synth_data.reward.scalarization",
+        ),
         description=(
             "Heuristic proxy for trace-level information value. This is not "
             "the verifier-owned Bayesian expected-information-gain reward."
@@ -236,28 +303,81 @@ _CATALOG_SPECS: Final[tuple[RewardSourceSpec, ...]] = (
         name="heuristic.composite_reward",
         evidence_kind=EvidenceKind.heuristic,
         truth_owner=TruthOwner.heuristic,
-        allowed_producers=(
-            "ppl_synth_data.reward.scalarization",
-            "ppl_synth_data.dataset.rich_reward_export",
-        ),
+        trainable=True,
+        allowed_producers=("ppl_synth_data.reward.scalarization",),
         description="Mixed-source reward aggregate containing heuristic components.",
     ),
     RewardSourceSpec(
         name="heuristic.runtime_import",
         evidence_kind=EvidenceKind.heuristic,
         truth_owner=TruthOwner.heuristic,
+        trainable=False,
         allowed_producers=("ppl_synth_data.runtime_registry",),
         description="Runtime import or availability heuristic.",
+    ),
+    RewardSourceSpec(
+        name="heuristic.postprocess_fix_pilot_programs",
+        evidence_kind=EvidenceKind.heuristic,
+        truth_owner=TruthOwner.heuristic,
+        trainable=False,
+        allowed_producers=("ppl_synth_data.scripts.fix_pilot_programs",),
+        description="Post-processing heuristic applied to pilot programs.",
+    ),
+    RewardSourceSpec(
+        name="heuristic.lazyppl_elpd_error",
+        evidence_kind=EvidenceKind.heuristic,
+        truth_owner=TruthOwner.heuristic,
+        trainable=False,
+        allowed_producers=(
+            "ppl_synth_data.harbor.templates.test_lazyppl",
+            "ppl_synth_data.docker.lazyppl_harbor.score",
+        ),
+        description="LazyPPL verifier failure artifact.",
+    ),
+    RewardSourceSpec(
+        name="heuristic.pymc_elpd_error",
+        evidence_kind=EvidenceKind.heuristic,
+        truth_owner=TruthOwner.heuristic,
+        trainable=False,
+        allowed_producers=("ppl_synth_data.harbor.pymc_verifier",),
+        description=(
+            "Explicit non-trainable artifact emitted while candidate-side "
+            "PyMC held-out verification is unavailable."
+        ),
     ),
     RewardSourceSpec(
         name="heuristic.judge_exception",
         evidence_kind=EvidenceKind.heuristic,
         truth_owner=TruthOwner.heuristic,
+        trainable=False,
         allowed_producers=(
-            "ppl_synth_data.harbor.validator_template",
             "ppl_synth_data.eval.orchestrator",
+            "ppl_synth_data.harbor.validator_template",
         ),
         description="Exception while scoring a trial.",
+    ),
+    RewardSourceSpec(
+        name="heuristic.no_submission",
+        evidence_kind=EvidenceKind.heuristic,
+        truth_owner=TruthOwner.heuristic,
+        trainable=False,
+        allowed_producers=("ppl_synth_data.eval.orchestrator",),
+        description="Trial ended without a submitted program.",
+    ),
+    RewardSourceSpec(
+        name="unjudged",
+        evidence_kind=EvidenceKind.heuristic,
+        truth_owner=TruthOwner.heuristic,
+        trainable=False,
+        allowed_producers=(
+            "ppl_synth_data.gates.reward_variance",
+            "ppl_synth_data.harbor.pymc_verifier",
+            "ppl_synth_data.harbor.validator_template",
+        ),
+        description=(
+            "Non-trainable disposition sentinel when a trial or gate sample "
+            "could not be judged."
+        ),
     ),
 )
 
@@ -286,6 +406,15 @@ def ensure_reward_source_registered(name: str) -> RewardSourceSpec:
     return get_reward_source(name)
 
 
+def ensure_reward_source_trainable(name: str) -> RewardSourceSpec:
+    spec = get_reward_source(name)
+    if not spec.trainable:
+        raise RewardSourceNotTrainableError(
+            f"reward_source {name!r} is registered but not trainable"
+        )
+    return spec
+
+
 def list_reward_sources() -> tuple[str, ...]:
     return tuple(sorted(REWARD_SOURCE_CATALOG))
 
@@ -295,7 +424,7 @@ class RewardComponent(ContractModel):
 
     name: Annotated[str, Field(min_length=1)]
     kind: RewardComponentKind
-    value: float
+    value: float | None
     source: Annotated[str, Field(min_length=1)]
     evidence_kind: EvidenceKind
     truth_owner: TruthOwner
@@ -362,7 +491,7 @@ class RewardComponent(ContractModel):
         info: object,
     ) -> dict[str, JsonValue]:
         field_name = getattr(info, "field_name", "field")
-        return require_json_serializable(value, field_name=field_name)
+        return _validate_jsonish(value, field_name=field_name)
 
     @model_validator(mode="after")
     def provenance_matches_catalog(self) -> "RewardComponent":
@@ -425,7 +554,7 @@ class RewardScalarization(ContractModel):
     @field_validator("diagnostics")
     @classmethod
     def diagnostics_are_json(cls, value: dict[str, JsonValue]) -> dict[str, JsonValue]:
-        return require_json_serializable(value, field_name="diagnostics")
+        return _validate_jsonish(value, field_name="diagnostics")
 
     @model_validator(mode="after")
     def component_names_are_unique_and_weighted(self) -> "RewardScalarization":
@@ -475,7 +604,7 @@ class RewardRubric(ContractModel):
     @field_validator("provenance")
     @classmethod
     def provenance_is_json(cls, value: dict[str, JsonValue]) -> dict[str, JsonValue]:
-        return require_json_serializable(value, field_name="provenance")
+        return _validate_jsonish(value, field_name="provenance")
 
     @model_validator(mode="after")
     def criteria_are_nonempty_and_unique(self) -> "RewardRubric":
@@ -497,16 +626,46 @@ class RewardArtifact(ContractModel):
     evidence_kind: EvidenceKind
     truth_owner: TruthOwner
     producer: Annotated[str, Field(min_length=1)]
-    training_log_reward: float = Field(ge=TRAINING_LOG_REWARD_MIN)
+    training_log_reward: float | None = Field(ge=TRAINING_LOG_REWARD_MIN)
     reward_transform: dict[str, JsonValue]
     metrics: dict[str, MetricValue] = Field(default_factory=dict)
     diagnostics: dict[str, JsonValue] = Field(default_factory=dict)
     provenance: dict[str, JsonValue] = Field(default_factory=dict)
     reward: float | None = None
-    components: dict[str, float] = Field(default_factory=dict)
+    components: dict[str, float | None] = Field(default_factory=dict)
     reward_components: tuple[RewardComponent, ...] = Field(default_factory=tuple)
     scalarization: RewardScalarization | None = None
     rubric: RewardRubric | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def backfill_components_from_typed(cls, data: Any) -> Any:
+        """Derive the legacy ``components`` map when a producer omits it.
+
+        Producers that emit only typed ``reward_components`` (for example the
+        ppl_synth_data Harbor validator template) carry the same information;
+        an explicitly supplied map is still checked against the typed list.
+        """
+        if not isinstance(data, dict) or data.get("components"):
+            return data
+        typed = data.get("reward_components")
+        if not typed:
+            return data
+        derived: dict[str, Any] = {}
+        for component in typed:
+            if isinstance(component, dict):
+                if "value" not in component:
+                    return data
+                name, value = component.get("name"), component.get("value")
+            else:
+                if not hasattr(component, "value"):
+                    return data
+                name = getattr(component, "name", None)
+                value = getattr(component, "value", None)
+            if name is None:
+                return data
+            derived[name] = value
+        return {**data, "components": derived}
 
     @field_validator("reward_components", mode="before")
     @classmethod
@@ -525,9 +684,20 @@ class RewardArtifact(ContractModel):
 
     @field_validator("training_log_reward")
     @classmethod
-    def training_log_reward_is_finite(cls, value: float) -> float:
+    def training_log_reward_is_finite(cls, value: float | None) -> float | None:
+        if value is None:
+            return None
         if not math.isfinite(value):
             raise ValueError("training_log_reward must be finite")
+        return value
+
+    @field_validator("reward")
+    @classmethod
+    def reward_is_finite(cls, value: float | None) -> float | None:
+        if value is None:
+            return None
+        if not math.isfinite(value):
+            raise ValueError("reward must be finite")
         return value
 
     @field_validator("reward_transform", "diagnostics", "provenance")
@@ -536,7 +706,7 @@ class RewardArtifact(ContractModel):
         cls, value: dict[str, JsonValue], info: object
     ) -> dict[str, JsonValue]:
         field_name = getattr(info, "field_name", "field")
-        return require_json_serializable(value, field_name=field_name)
+        return _validate_jsonish(value, field_name=field_name)
 
     @field_validator("metrics")
     @classmethod
@@ -552,8 +722,12 @@ class RewardArtifact(ContractModel):
 
     @field_validator("components")
     @classmethod
-    def components_are_finite(cls, value: dict[str, float]) -> dict[str, float]:
+    def components_are_finite(
+        cls, value: dict[str, float | None]
+    ) -> dict[str, float | None]:
         for key, component in value.items():
+            if component is None:
+                continue
             if not math.isfinite(float(component)):
                 raise ValueError(f"component {key!r} must be finite")
         return value
@@ -561,6 +735,131 @@ class RewardArtifact(ContractModel):
     @model_validator(mode="after")
     def provenance_matches_catalog(self) -> "RewardArtifact":
         spec = get_reward_source(self.reward_source)
+        raw_disposition = (
+            self.diagnostics.get("disposition")
+            if isinstance(self.diagnostics, dict)
+            else None
+        )
+        if raw_disposition is not None:
+            if not isinstance(raw_disposition, str):
+                raise ValueError("diagnostics.disposition must be a valid Disposition string")
+            _enum_from_wire_string(raw_disposition, Disposition)
+        is_unjudged = raw_disposition == Disposition.unjudged
+        declares_unjudged = (
+            is_unjudged
+            or self.reward_source == Disposition.unjudged
+            or any(
+                c.source == Disposition.unjudged
+                or (
+                    isinstance(c.diagnostics, dict)
+                    and c.diagnostics.get("disposition") == Disposition.unjudged
+                )
+                for c in self.reward_components
+            )
+        )
+        has_null_reward_or_component = (
+            self.training_log_reward is None
+            or any(v is None for v in self.components.values())
+            or any(c.value is None for c in self.reward_components)
+        )
+        is_infrastructure = raw_disposition == Disposition.infrastructure
+        if not is_unjudged and not is_infrastructure and has_null_reward_or_component:
+            raise ValueError(
+                "null training_log_reward or component value is only permitted "
+                "when diagnostics.disposition is 'unjudged' or 'infrastructure'"
+            )
+        if is_infrastructure:
+            # Null values exclude infrastructure faults from training and scoring.
+            numeric = []
+            if self.training_log_reward is not None:
+                numeric.append("training_log_reward")
+            if self.reward is not None:
+                numeric.append("reward")
+            numeric.extend(
+                f"components[{name!r}]"
+                for name, value in self.components.items()
+                if value is not None
+            )
+            numeric.extend(
+                f"reward_components[{component.name!r}].value"
+                for component in self.reward_components
+                if component.value is not None
+            )
+            numeric.extend(
+                f"reward_components[{component.name!r}].log_contribution"
+                for component in self.reward_components
+                if component.log_contribution is not None
+            )
+            if numeric:
+                raise ValueError(
+                    "an infrastructure fault carries null values, never numeric "
+                    f"ones; numeric fields: {', '.join(numeric)}"
+                )
+            reason_code = (
+                self.diagnostics.get("reason_code")
+                if isinstance(self.diagnostics, dict)
+                else None
+            )
+            if (
+                not isinstance(reason_code, str)
+                or reason_code not in INFRASTRUCTURE_REASON_CODES
+            ):
+                raise ValueError(
+                    "infrastructure reward artifact requires diagnostics.reason_code "
+                    f"in INFRASTRUCTURE_REASON_CODES; got {reason_code!r}"
+                )
+            # No early return: the producer, evidence, ownership, coherence
+            # and scalarization checks below apply to infrastructure rows too.
+        if declares_unjudged:
+            if not is_unjudged:
+                raise ValueError(
+                    "unjudged reward artifact requires diagnostics.disposition == 'unjudged'"
+                )
+            if spec.trainable or any(
+                get_reward_source(c.source).trainable for c in self.reward_components
+            ):
+                raise ValueError(
+                    "unjudged reward artifact must not use a trainable reward_source"
+                )
+            reason_code = (
+                self.diagnostics.get("reason_code")
+                if isinstance(self.diagnostics, dict)
+                else None
+            )
+            if not isinstance(reason_code, str) or reason_code not in UNJUDGED_REASON_CODES:
+                raise ValueError(
+                    "unjudged reward artifact requires diagnostics.reason_code "
+                    f"in UNJUDGED_REASON_CODES; got {reason_code!r}"
+                )
+            if self.diagnostics.get("training_target_status") != "absent":
+                raise ValueError(
+                    "unjudged reward artifact requires "
+                    "diagnostics.training_target_status == 'absent'"
+                )
+            if self.diagnostics.get("refusal_code") is not None:
+                raise ValueError(
+                    "unjudged reward artifact requires diagnostics.refusal_code is None"
+                )
+            if (
+                not isinstance(self.reward_transform, dict)
+                or self.reward_transform.get("authoritative") is not False
+            ):
+                raise ValueError(
+                    "unjudged reward artifact requires reward_transform.authoritative is False"
+                )
+            if self.reward is not None or self.training_log_reward is not None:
+                raise ValueError(
+                    "unjudged reward artifact requires reward is None and "
+                    "training_log_reward is None"
+                )
+            if any(v is not None for v in self.components.values()) or any(
+                c.value is not None or c.log_contribution is not None
+                for c in self.reward_components
+            ):
+                raise ValueError(
+                    "unjudged reward artifact requires null component value and "
+                    "log_contribution"
+                )
         if self.evidence_kind is not spec.evidence_kind:
             raise ValueError(
                 f"evidence_kind mismatch for reward_source={self.reward_source!r}"
@@ -575,18 +874,144 @@ class RewardArtifact(ContractModel):
                 f"producer {self.producer!r} is not allowed for "
                 f"reward_source={self.reward_source!r}; allowed: {allowed}"
             )
+
+        if self.reward_components:
+            typed_components = {
+                component.name: component.value for component in self.reward_components
+            }
+            if len(typed_components) != len(self.reward_components):
+                raise ValueError("reward_components names must be unique")
+            if set(self.components) != set(typed_components):
+                raise ValueError(
+                    "components must exactly match reward_components names"
+                )
+            mismatched_values = sorted(
+                name
+                for name, value in self.components.items()
+                if value != typed_components[name]
+            )
+            if mismatched_values:
+                raise ValueError(
+                    "components values must exactly match reward_components values: "
+                    f"{mismatched_values}"
+                )
+
+        if self.reward_source == "heuristic.composite_reward":
+            if not self.reward_components:
+                raise ValueError(
+                    "heuristic.composite_reward requires non-empty reward_components"
+                )
+            if self.scalarization is None:
+                raise ValueError("heuristic.composite_reward requires scalarization")
+
+        component_names = {component.name for component in self.reward_components}
         if self.scalarization is not None:
-            component_names = {component.name for component in self.reward_components}
             expected_names = set(self.scalarization.component_names)
             if component_names != expected_names:
                 raise ValueError(
                     "scalarization component_names must match reward_components names"
                 )
+
         if self.rubric is not None:
             has_rubric_component = any(
                 component.kind is RewardComponentKind.process_rubric
+                or component.source == "heuristic.llm_rubric"
                 for component in self.reward_components
             )
             if not has_rubric_component:
                 raise ValueError("rubric requires at least one rubric reward component")
+
+        declares_aggregation = (
+            bool(self.reward_components) or self.scalarization is not None
+        )
+        if spec.trainable and declares_aggregation:
+            if not self.reward_components:
+                raise ValueError(
+                    "trainable scalarization requires non-empty reward_components"
+                )
+            if self.scalarization is None:
+                raise ValueError(
+                    "trainable reward_components require auditable scalarization"
+                )
+            for component in self.reward_components:
+                ensure_reward_source_trainable(component.source)
+            if self.scalarization.method not in {
+                RewardScalarizationMethod.weighted_sum,
+                RewardScalarizationMethod.verifier_gated_weighted_sum,
+            }:
+                raise ValueError(
+                    "trainable reward scalarization method is not auditable"
+                )
+            if set(self.scalarization.weights) != component_names:
+                raise ValueError(
+                    "trainable reward scalarization weights must exactly cover "
+                    "reward_components"
+                )
+            for component in self.reward_components:
+                if self.scalarization.weights[component.name] != component.weight:
+                    raise ValueError(
+                        "trainable reward scalarization weights must exactly match "
+                        "reward component weights"
+                    )
+                if component.log_contribution is None:
+                    raise ValueError(
+                        "trainable reward scalarization requires "
+                        "component log_contribution values"
+                    )
+            if (
+                self.scalarization.method
+                is RewardScalarizationMethod.verifier_gated_weighted_sum
+            ):
+                declared_terminal_verifiers = [
+                    component
+                    for component in self.reward_components
+                    if component.kind is RewardComponentKind.terminal_verifier
+                ]
+                if not declared_terminal_verifiers:
+                    raise ValueError(
+                        "verifier_gated_weighted_sum requires a terminal verifier "
+                        "component"
+                    )
+                if any(
+                    component.evidence_kind is not EvidenceKind.verifier
+                    or component.truth_owner is not TruthOwner.verifier
+                    for component in declared_terminal_verifiers
+                ):
+                    raise ValueError(
+                        "terminal verifier gates must be verifier-owned evidence"
+                    )
+            if self.training_log_reward is None:
+                raise ValueError(
+                    "trainable reward scalarization requires finite training_log_reward"
+                )
+            expected_log_reward = sum(
+                self.scalarization.weights[component.name]
+                * component.log_contribution
+                for component in self.reward_components
+                if component.log_contribution is not None
+            )
+            if (
+                self.scalarization.method
+                is RewardScalarizationMethod.verifier_gated_weighted_sum
+            ):
+                if any(
+                    component.log_contribution
+                    == self.scalarization.lower_log_reward_bound
+                    for component in declared_terminal_verifiers
+                ):
+                    expected_log_reward = self.scalarization.lower_log_reward_bound
+            expected_log_reward = max(
+                expected_log_reward,
+                self.scalarization.lower_log_reward_bound,
+            )
+            if not math.isclose(
+                self.training_log_reward,
+                expected_log_reward,
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            ):
+                raise ValueError(
+                    "trainable reward training_log_reward must match auditable "
+                    "scalarization"
+                )
         return self

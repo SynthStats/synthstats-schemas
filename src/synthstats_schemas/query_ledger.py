@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from typing import Annotated, Literal
 
-from pydantic import Field, JsonValue, model_validator
+from pydantic import Field, JsonValue, field_validator, model_validator
 
 from synthstats_schemas.base import ContractModel
 
@@ -32,6 +33,16 @@ class QueryLedgerEvent(ContractModel):
     outcome: Literal["resolved", "refused"]
     observation: JsonValue = None
     refusal_reason: Annotated[str, Field(min_length=1)] | None = None
+
+    @field_validator("observation")
+    @classmethod
+    def require_json_numbers(cls, value: JsonValue) -> JsonValue:
+        # JSON has no NaN or infinity, and pydantic writes them as null, so such an observation would change on the wire.
+        try:
+            json.dumps(value, allow_nan=False)
+        except ValueError as error:
+            raise ValueError("An observation holds a number that JSON cannot carry") from error
+        return value
 
     @model_validator(mode="after")
     def require_outcome_payload(self) -> QueryLedgerEvent:

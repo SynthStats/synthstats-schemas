@@ -4,15 +4,27 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
+from harbor.models.trajectories import (
+    Agent,
+    AudioSource,
+    ContentPart,
+    FinalMetrics,
+    ImageSource,
+    Metrics,
+    Observation,
+    ObservationResult,
+    Step,
+    SubagentTrajectoryRef,
+    ToolCall,
+    Trajectory,
+)
 from pydantic import Field
 
 from synthstats_schemas.base import (
-    ATIF_SCHEMA_VERSION,
     ContractModel,
     JsonValue,
     RECORD_SCHEMA_VERSION,
 )
-from synthstats_schemas.reward import RewardArtifact
 
 
 class RuntimeDescriptor(ContractModel):
@@ -49,29 +61,6 @@ class GenerationRecord(ContractModel):
     metadata: dict[str, JsonValue] = Field(default_factory=dict)
 
 
-class TraceStep(ContractModel):
-    step_id: str | None = None
-    source: str | None = None
-    role: str | None = None
-    message: JsonValue | None = None
-    content: str | None = None
-    reasoning_content: str | None = None
-    tool_calls: list[dict[str, JsonValue]] = Field(default_factory=list)
-    observation: dict[str, JsonValue] | None = None
-    metrics: dict[str, JsonValue] = Field(default_factory=dict)
-    metadata: dict[str, JsonValue] = Field(default_factory=dict)
-
-
-class TraceRecord(ContractModel):
-    schema_version: Literal["ppl.platform.record.v0"] = RECORD_SCHEMA_VERSION
-    trace_id: Annotated[str, Field(min_length=1)]
-    task_id: str | None = None
-    trial_id: str | None = None
-    steps: list[TraceStep] = Field(default_factory=list)
-    artifacts: dict[str, JsonValue] = Field(default_factory=dict)
-    metadata: dict[str, JsonValue] = Field(default_factory=dict)
-
-
 class TrialRecord(ContractModel):
     schema_version: Literal["ppl.platform.record.v0"] = RECORD_SCHEMA_VERSION
     trial_id: Annotated[str, Field(min_length=1)]
@@ -85,11 +74,9 @@ class TrialRecord(ContractModel):
     metadata: dict[str, JsonValue] = Field(default_factory=dict)
 
 
-class ATIFRecord(ContractModel):
-    """ATIF trajectory shell for offline interchange."""
-
-    schema_version: Literal["ATIF-v1.6"] = ATIF_SCHEMA_VERSION
-    session_id: Annotated[str, Field(min_length=1)]
-    steps: list[TraceStep]
-    metadata: dict[str, JsonValue] = Field(default_factory=dict)
-    reward_artifact: RewardArtifact | None = None
+__all__ = [
+    "Agent", "AudioSource", "ContentPart", "FinalMetrics", "ImageSource",
+    "Metrics", "Observation", "ObservationResult", "Step", "SubagentTrajectoryRef",
+    "ToolCall", "Trajectory", "GenerationRecord", "PromptView", "RuntimeDescriptor",
+    "TrialRecord",
+]

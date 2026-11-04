@@ -35,7 +35,11 @@ NonEmptyStr = Annotated[str, Field(min_length=1)]
 
 def _validate_safe_id(value: str, *, field_name: str) -> str:
     path = Path(value)
-    if path.name != value or any(part in {"", ".", ".."} for part in path.parts):
+    if (
+        "\x00" in value
+        or path.name != value
+        or any(part in {"", ".", ".."} for part in path.parts)
+    ):
         raise ValueError(f"{field_name} must be a single safe path segment")
     return value
 
@@ -454,11 +458,79 @@ class LiveRichRewardManifest(ContractModel):
         return self
 
 
+class SFTReleaseRowArtifact(ContractModel):
+    row_id: NonEmptyStr
+    runtime: NonEmptyStr
+    split: Literal["train", "validation", "test"]
+    split_group_id: NonEmptyStr
+    row_sha256: Sha256
+
+    @field_validator("row_id", "runtime", "split_group_id")
+    @classmethod
+    def ids_are_safe(cls, value: str, info: object) -> str:
+        field_name = getattr(info, "field_name", "id")
+        return _validate_safe_id(value, field_name=field_name)
+
+
+class SFTReleaseManifest(ContractModel):
+    schema_version: Literal["synthstats.sft_release.v1"]
+    count_written: int = Field(ge=0)
+    count_unique_split_groups: int = Field(ge=0)
+    row_split_counts: dict[Literal["train", "validation", "test"], int]
+    split_group_counts: dict[Literal["train", "validation", "test"], int]
+    split_group_assignments: dict[NonEmptyStr, Literal["train", "validation", "test"]]
+    row_artifacts: dict[NonEmptyStr, SFTReleaseRowArtifact]
+
+    @model_validator(mode="after")
+    def counts_and_assignments_match(self) -> "SFTReleaseManifest":
+        for row_key, artifact in self.row_artifacts.items():
+            _validate_safe_id(row_key, field_name="row_artifacts key")
+            if row_key != artifact.row_id:
+                raise ValueError("row_artifacts keys must match artifact row_id values")
+
+        group_splits: dict[str, set[str]] = {}
+        for artifact in self.row_artifacts.values():
+            group_splits.setdefault(artifact.split_group_id, set()).add(artifact.split)
+        if any(len(splits) != 1 for splits in group_splits.values()):
+            raise ValueError("each split_group_id must belong to exactly one split")
+
+        for split_group_id in self.split_group_assignments:
+            _validate_safe_id(
+                split_group_id,
+                field_name="split_group_assignments key",
+            )
+        expected_assignments = {
+            split_group_id: next(iter(splits))
+            for split_group_id, splits in group_splits.items()
+        }
+        if self.split_group_assignments != expected_assignments:
+            raise ValueError(
+                "split_group_assignments must match row_artifacts split groups"
+            )
+
+        if self.count_written != len(self.row_artifacts):
+            raise ValueError("count_written must equal row_artifacts length")
+        if self.count_unique_split_groups != len(expected_assignments):
+            raise ValueError(
+                "count_unique_split_groups must equal unique split_group_id count"
+            )
+        if self.row_split_counts != dict(
+            Counter(artifact.split for artifact in self.row_artifacts.values())
+        ):
+            raise ValueError("row_split_counts must match row_artifacts splits")
+        if self.split_group_counts != dict(Counter(expected_assignments.values())):
+            raise ValueError(
+                "split_group_counts must match split_group_assignments values"
+            )
+        return self
+
+
 ReleaseManifest: TypeAlias = Annotated[
     ATIFExportManifest
     | MixedATIFAssemblyManifest
     | RichRewardATIFExportManifest
-    | LiveRichRewardManifest,
+    | LiveRichRewardManifest
+    | SFTReleaseManifest,
     Field(discriminator="schema_version"),
 ]
 

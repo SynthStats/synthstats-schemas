@@ -1,8 +1,10 @@
-"""The Weights & Biases (W&B) privacy check that launchers pass to
-``check_launch`` as ``wandb_probe``.
+"""A read-only W&B project privacy probe.
 
-A run may log only to an existing project of the key's own user whose access is "PRIVATE". A project that W&B creates on first use takes the entity's default visibility. The probe only reads; it never creates or changes
-a project.
+A run may log only to an existing private project of the key's own user. The
+declared entity must match the authenticated user, and the existing project
+must be "PRIVATE": a key's default entity can be a team, and a project that
+W&B creates on first use takes the entity's default visibility, so neither is
+accepted. The probe only reads; it never creates or changes a project.
 """
 
 from __future__ import annotations
@@ -10,6 +12,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Any
 
+# The access value W&B reports for a private project.
 PRIVATE_ACCESS = "PRIVATE"
 
 _QUERY = """
