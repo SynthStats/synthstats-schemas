@@ -1,0 +1,132 @@
+{
+  "schema_version": "synthstats.harbor.reward.v1",
+  "reward": 0.0,
+  "reward_source": "validation.compilation",
+  "evidence_kind": "verifier",
+  "truth_owner": "verifier",
+  "producer": "ppl_synth_data.harbor.validator_template",
+  "metrics": {
+    "cascade_reward": 0.0,
+    "passed_layers": 5,
+    "total_layers": 6
+  },
+  "reward_components": [
+    {
+      "name": "compilation_cascade",
+      "kind": "terminal_verifier",
+      "value": 0.0,
+      "source": "validation.compilation",
+      "evidence_kind": "verifier",
+      "truth_owner": "verifier",
+      "producer": "ppl_synth_data.harbor.validator_template",
+      "weight": 1.0,
+      "log_contribution": -20.0,
+      "confidence": 1.0,
+      "metrics": {
+        "cascade_reward": 0.0,
+        "passed_layers": 5,
+        "total_layers": 6
+      },
+      "diagnostics": {
+        "failed_layer": "L5_data_perturbation",
+        "failure_reason": "target_not_observed: register the target with pm.Data",
+        "semantic_status": "critical",
+        "disposition": "refused",
+        "reason_code": "target_not_observed"
+      },
+      "provenance": {
+        "runtime": "pymc",
+        "verifier": "harbor_pymc_l0_l5",
+        "profile": "strict",
+        "admission_contract": "synthstats.harbor.numeric_admission.v1"
+      }
+    }
+  ],
+  "scalarization": {
+    "method": "weighted_sum",
+    "component_names": [
+      "compilation_cascade"
+    ],
+    "weights": {
+      "compilation_cascade": 1.0
+    },
+    "lower_log_reward_bound": -20.0,
+    "diagnostics": {
+      "reward_transform": "binary_log_reward"
+    }
+  },
+  "diagnostics": {
+    "details": {
+      "L0_parse": {
+        "passed": true,
+        "time_s": 0.0
+      },
+      "L1_ast_safety": {
+        "passed": true,
+        "time_s": 0.0
+      },
+      "L2_model_build": {
+        "passed": true,
+        "time_s": 1.01
+      },
+      "L3_harbor_pymc_strict_profile": {
+        "passed": true,
+        "time_s": 0.715
+      },
+      "L4_exploit_heuristics": {
+        "passed": true,
+        "time_s": 0.712
+      },
+      "L5_data_perturbation": {
+        "passed": false,
+        "time_s": 1.421,
+        "assessment": "assessed",
+        "phase": "target_binding",
+        "disposition": "refused",
+        "reason_code": "target_not_observed",
+        "refusal_code": "target_not_observed",
+        "reason": "target_not_observed: register the target with pm.Data"
+      }
+    },
+    "failed_layer": "L5_data_perturbation",
+    "failure_reason": "target_not_observed: register the target with pm.Data",
+    "semantic_status": "critical",
+    "verifier_profile": {
+      "status": "supported",
+      "effective": {
+        "cxx": "",
+        "mode": "FAST_COMPILE",
+        "linker": "auto",
+        "optimizer": "o4",
+        "floatX": "float64"
+      },
+      "c_thunks": false,
+      "use_cloop": false
+    },
+    "disposition": "refused",
+    "reason_code": "target_not_observed",
+    "phase": "target_binding",
+    "training_target_status": "refusal_zero",
+    "refusal_code": "target_not_observed",
+    "worker_isolation": {
+      "worker_cap_eff": "0000000000000000",
+      "worker_no_new_privs": 1,
+      "worker_tests_fds": 0
+    },
+    "seccomp_profile_sha256": "afb4934b023cfceaaec1a9d752ca3f801aaa96eb2e59abe6e7ea16976948e080",
+    "tighten_sockets": false
+  },
+  "provenance": {
+    "runtime": "pymc",
+    "verifier": "harbor_pymc_l0_l5",
+    "profile": "strict",
+    "admission_contract": "synthstats.harbor.numeric_admission.v1"
+  },
+  "reward_transform": {
+    "kind": "binary_log_reward",
+    "pass_log_reward": 0.0,
+    "lower_log_reward_bound": -20.0,
+    "authoritative": true
+  },
+  "training_log_reward": -20.0
+}

@@ -8,8 +8,9 @@ import math
 from collections.abc import Mapping
 from typing import Annotated, Literal, TypeGuard, cast
 
-from pydantic import Field, JsonValue, StrictFloat, StrictInt, StrictStr, model_validator
+from pydantic import Field, StrictFloat, StrictInt, StrictStr, field_validator, model_validator
 
+from synthstats_schemas.canonical import canonical_json_bytes
 from synthstats_schemas.base import ContractModel
 
 
@@ -60,12 +61,17 @@ DesignValue = int | float | str
 
 
 def _finite_numeric(value: object) -> TypeGuard[int | float]:
+    """A finite number: every int, and any float that is neither inf nor nan.
+
+    An int is always finite, so it is never routed through a float
+    conversion: ``math.isfinite`` overflows on integers past float's range
+    and would refuse a value that is perfectly valid.
+    """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return False
-    try:
-        return math.isfinite(value)
-    except OverflowError:
-        return False
+    if isinstance(value, int):
+        return True
+    return math.isfinite(value)
 
 
 class RealDomain(ContractModel):
@@ -197,15 +203,6 @@ InteractionContract = Annotated[
 ]
 
 
-class ScorerRules(ContractModel):
-    """A JSON snapshot of the scorer registry and the pin of its exported bytes."""
-
-    model_config = {"allow_inf_nan": False}
-
-    registry_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
-    registry: dict[str, JsonValue]
-
-
 class TaskContractV1(ContractModel):
     schema_version: Literal["synthstats.task_contract.v1"]
     language: Literal["pymc"]
@@ -228,13 +225,35 @@ class TaskContract(ContractModel):
     entry_point: EntryPoint
     data: DataPassing
     provided_names: dict[str, str]
-    allowed_imports: tuple[ImportRule, ...]
     conventions: tuple[Convention, ...]
     environment: Environment
     interaction: InteractionContract
-    scorer_rules: ScorerRules | None = Field(
-        default=None, exclude_if=lambda value: value is None,
-    )
+    required_predictor_groups: tuple[Annotated[tuple[str, ...], Field(min_length=1)], ...]
+    relationship: str
+    row_semantics: str
+
+    @field_validator("required_predictor_groups")
+    @classmethod
+    def _groups_name_declared_columns(cls, groups, info):
+        keys = set(info.data.get("data").keys) if info.data.get("data") else set()
+        for group in groups:
+            if not group:
+                raise ValueError("a required_predictor_group must name at least one column")
+            for column in group:
+                if not column:
+                    raise ValueError("group columns must be nonempty strings")
+                if keys and column not in keys:
+                    raise ValueError(
+                        f"required_predictor_group names undeclared column {column!r}"
+                    )
+        return groups
+
+    @field_validator("relationship", "row_semantics")
+    @classmethod
+    def _nonempty_terms(cls, value):
+        if not value or not value.strip():
+            raise ValueError("relationship and row_semantics must be nonempty terms")
+        return value
 
     @property
     def interaction_mode(self) -> Literal["pool", "designed"]:
@@ -271,16 +290,7 @@ def parse_task_contract(payload: str | bytes | Mapping[str, object]) -> TaskCont
 
 def canonical_json(contract: TaskContractV1 | TaskContract) -> bytes:
     """Serialize the contract's wire fields as compact, sorted-key UTF-8 JSON."""
-    return _canonical_json(contract.model_dump(mode="json"))
-
-
-def _canonical_json(payload: dict[str, object]) -> bytes:
-    return json.dumps(
-        payload,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    ).encode("utf-8")
+    return canonical_json_bytes(contract.model_dump(mode="json"))
 
 
 def contract_sha256(contract: TaskContractV1 | TaskContract) -> str:
@@ -295,6 +305,10 @@ def contract_template_sha256(contract: TaskContractV1 | TaskContract) -> str:
         exclude={
             "data": {"keys", "target_key"},
             "interaction": {"observation_key", "design_space"},
+            # The groups name THIS task's columns; relationship and
+            # row_semantics are family-level constants and stay cohort
+            # requirements.
+            "required_predictor_groups": True,
         },
     )
-    return hashlib.sha256(_canonical_json(payload)).hexdigest()
+    return hashlib.sha256(canonical_json_bytes(payload)).hexdigest()

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Final, Literal, TypeAlias
+from typing import Annotated, Any, Final, Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, StringConstraints
+from pydantic import JsonValue as PydanticJsonValue
 
 REWARD_ARTIFACT_SCHEMA_VERSION: Final[Literal["synthstats.harbor.reward.v1"]] = (
     "synthstats.harbor.reward.v1"
@@ -18,19 +19,17 @@ CARD_SCHEMA_VERSION: Final[Literal["ppl.platform.card.v0"]] = "ppl.platform.card
 
 TRAINING_LOG_REWARD_MIN: Final[float] = -20.0
 
-JsonValue: TypeAlias = Any
+JsonValue: TypeAlias = PydanticJsonValue
 MetricValue: TypeAlias = int | float | bool | str | None
 
-
-# The internal-revalidation marker: a private object compared by identity, so
-# the public validation-context parameter can never forge it.
-_REVALIDATION_SENTINEL = object()
+Sha256 = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+NonEmptyStr = Annotated[str, StringConstraints(min_length=1)]
 
 
 class ContractModel(BaseModel):
     """Strict immutable base for cross-repo wire contracts."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True, allow_inf_nan=False)
 
     def _revalidated_snapshot(self) -> "ContractModel":
         payload = BaseModel.model_dump(
@@ -39,15 +38,7 @@ class ContractModel(BaseModel):
             round_trip=True,
             warnings="error",
         )
-        # The sentinel marks an internal revalidation of an already-validated
-        # instance: constructors that require external validation context (the
-        # RL sidecar's exact trajectory bytes) skip only their external
-        # byte-join on this path; every internal invariant still revalidates.
-        # It is a private object checked by identity, not a truthy key: the
-        # public context parameter cannot forge it.
-        snapshot = type(self).model_validate(
-            payload, context={"_revalidated_snapshot": _REVALIDATION_SENTINEL}
-        )
+        snapshot = type(self).model_validate(payload)
         _restore_fields_set(self, snapshot)
         return snapshot
 

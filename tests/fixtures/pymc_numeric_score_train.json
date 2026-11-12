@@ -1,0 +1,326 @@
+{
+  "schema_version": "synthstats.harbor.reward.v1",
+  "reward": 1.346182,
+  "reward_source": "validation.pymc_elpd",
+  "evidence_kind": "verifier",
+  "truth_owner": "verifier",
+  "producer": "ppl_synth_data.harbor.pymc_verifier",
+  "metrics": {
+    "avg_holdout_logp": -0.679021,
+    "holdout_elpd": -36.6671,
+    "train_elpd_loo": -0.0026,
+    "pareto_k_max": null,
+    "baseline_score": -38.80436683481206,
+    "gold_score": -31.61491838193399,
+    "temperature": 7.189448462878068,
+    "passed_layers": 8,
+    "total_layers": 8
+  },
+  "diagnostics": {
+    "details": {
+      "L0_parse": {
+        "passed": true,
+        "time_s": 0.0
+      },
+      "L1_ast_safety": {
+        "passed": true,
+        "time_s": 0.001
+      },
+      "L2_model_build": {
+        "passed": true,
+        "time_s": 1.256
+      },
+      "L3_harbor_pymc_strict_profile": {
+        "passed": true,
+        "time_s": 0.752
+      },
+      "L4_exploit_heuristics": {
+        "passed": true,
+        "time_s": 0.737
+      },
+      "L5_data_perturbation": {
+        "passed": true,
+        "time_s": 1.762
+      },
+      "L5b_predictor_connectivity": {
+        "passed": true,
+        "assessment": "assessed",
+        "phase": "predictor_connectivity",
+        "cause": "fitted_heldout_loglik_roll",
+        "group_verdicts": {
+          "elevation_m": "connected",
+          "forest_percent": "connected",
+          "route_length_km": "connected"
+        },
+        "groups_total": 3,
+        "groups_tested": 3,
+        "groups_connected": 3,
+        "connected_fraction": 1.0,
+        "time_s": 0.208
+      }
+    },
+    "failed_layer": null,
+    "failure_reason": null,
+    "semantic_status": "pass",
+    "elpd_status": "scored",
+    "avg_holdout_logp": -0.6790211916209552,
+    "pareto_k_warning": null,
+    "pareto_k_status": "nonfinite",
+    "train_elpd_loo_status": "available",
+    "observed_families": {
+      "y_obs": "Bernoulli"
+    },
+    "training_n_obs": 3,
+    "row_latent_probe": {
+      "assessed": true,
+      "reason": "registered_input_resize",
+      "names": []
+    },
+    "inference_method": "posterior_mcmc",
+    "fit_warning_categories": {
+      "FutureWarning": 1
+    },
+    "density_target_kinds": {
+      "y_obs": "discrete"
+    },
+    "verified_discrete_exemption": true,
+    "verifier_profile": {
+      "status": "supported",
+      "effective": {
+        "cxx": "",
+        "mode": "FAST_COMPILE",
+        "linker": "auto",
+        "optimizer": "o4",
+        "floatX": "float64"
+      },
+      "c_thunks": false,
+      "use_cloop": false
+    },
+    "heldout_loglik_validated": true,
+    "heldout_pointwise_validated": true,
+    "heldout_sample_shape": [
+      1,
+      200
+    ],
+    "heldout_raw_negative_infinity_count": 0,
+    "transplant_probe_status": "effective_values_verified",
+    "predictor_input_assessment": {
+      "status": "assessed_known_numeric_inputs",
+      "assessed": true,
+      "declared_keys": [
+        "elevation_m",
+        "forest_percent",
+        "route_length_km"
+      ],
+      "validated_numeric_keys": {
+        "visible": [
+          "elevation_m",
+          "forest_percent",
+          "route_length_km"
+        ],
+        "censored_holdout": [
+          "elevation_m",
+          "forest_percent",
+          "route_length_km"
+        ]
+      },
+      "unresolved_dynamic_key": false,
+      "missing_declared_keys": [],
+      "unresolved_nonnumeric_keys": []
+    },
+    "disposition": "scored",
+    "reason_code": null,
+    "phase": "reward_construction",
+    "training_target_status": "score_transform",
+    "worker_isolation": {
+      "worker_cap_eff": "0000000000000000",
+      "worker_no_new_privs": 1,
+      "worker_tests_fds": 0
+    },
+    "seccomp_profile_sha256": "afb4934b023cfceaaec1a9d752ca3f801aaa96eb2e59abe6e7ea16976948e080",
+    "tighten_sockets": false
+  },
+  "provenance": {
+    "runtime": "pymc",
+    "verifier": "harbor_pymc_l0_l6",
+    "profile": "strict",
+    "admission_contract": "synthstats.harbor.numeric_admission.v1"
+  },
+  "reward_transform": {
+    "kind": "baseline_normalized_log_reward",
+    "baseline_score": -38.80436683481206,
+    "gold_score": -31.61491838193399,
+    "temperature": 7.189448462878068,
+    "lower_log_reward_bound": -20.0,
+    "authoritative": true
+  },
+  "training_log_reward": 0.297272,
+  "components": {
+    "holdout_elpd": -36.6671
+  },
+  "reward_components": [
+    {
+      "name": "holdout_elpd",
+      "kind": "terminal_verifier",
+      "value": -36.6671,
+      "source": "validation.pymc_elpd",
+      "evidence_kind": "verifier",
+      "truth_owner": "verifier",
+      "producer": "ppl_synth_data.harbor.pymc_verifier",
+      "weight": 1.0,
+      "log_contribution": 0.297272,
+      "metrics": {
+        "baseline_score": -38.80436683481206,
+        "temperature": 7.189448462878068,
+        "train_elpd_loo": -0.002628614630990178,
+        "pareto_k_max": null,
+        "hidden_n_obs": 54
+      },
+      "diagnostics": {
+        "details": {
+          "L0_parse": {
+            "passed": true,
+            "time_s": 0.0
+          },
+          "L1_ast_safety": {
+            "passed": true,
+            "time_s": 0.001
+          },
+          "L2_model_build": {
+            "passed": true,
+            "time_s": 1.256
+          },
+          "L3_harbor_pymc_strict_profile": {
+            "passed": true,
+            "time_s": 0.752
+          },
+          "L4_exploit_heuristics": {
+            "passed": true,
+            "time_s": 0.737
+          },
+          "L5_data_perturbation": {
+            "passed": true,
+            "time_s": 1.762
+          },
+          "L5b_predictor_connectivity": {
+            "passed": true,
+            "assessment": "assessed",
+            "phase": "predictor_connectivity",
+            "cause": "fitted_heldout_loglik_roll",
+            "group_verdicts": {
+              "elevation_m": "connected",
+              "forest_percent": "connected",
+              "route_length_km": "connected"
+            },
+            "groups_total": 3,
+            "groups_tested": 3,
+            "groups_connected": 3,
+            "connected_fraction": 1.0,
+            "time_s": 0.208
+          }
+        },
+        "failed_layer": null,
+        "failure_reason": null,
+        "semantic_status": "pass",
+        "elpd_status": "scored",
+        "avg_holdout_logp": -0.6790211916209552,
+        "pareto_k_warning": null,
+        "pareto_k_status": "nonfinite",
+        "train_elpd_loo_status": "available",
+        "observed_families": {
+          "y_obs": "Bernoulli"
+        },
+        "training_n_obs": 3,
+        "row_latent_probe": {
+          "assessed": true,
+          "reason": "registered_input_resize",
+          "names": []
+        },
+        "inference_method": "posterior_mcmc",
+        "fit_warning_categories": {
+          "FutureWarning": 1
+        },
+        "density_target_kinds": {
+          "y_obs": "discrete"
+        },
+        "verified_discrete_exemption": true,
+        "verifier_profile": {
+          "status": "supported",
+          "effective": {
+            "cxx": "",
+            "mode": "FAST_COMPILE",
+            "linker": "auto",
+            "optimizer": "o4",
+            "floatX": "float64"
+          },
+          "c_thunks": false,
+          "use_cloop": false
+        },
+        "heldout_loglik_validated": true,
+        "heldout_pointwise_validated": true,
+        "heldout_sample_shape": [
+          1,
+          200
+        ],
+        "heldout_raw_negative_infinity_count": 0,
+        "transplant_probe_status": "effective_values_verified",
+        "predictor_input_assessment": {
+          "status": "assessed_known_numeric_inputs",
+          "assessed": true,
+          "declared_keys": [
+            "elevation_m",
+            "forest_percent",
+            "route_length_km"
+          ],
+          "validated_numeric_keys": {
+            "visible": [
+              "elevation_m",
+              "forest_percent",
+              "route_length_km"
+            ],
+            "censored_holdout": [
+              "elevation_m",
+              "forest_percent",
+              "route_length_km"
+            ]
+          },
+          "unresolved_dynamic_key": false,
+          "missing_declared_keys": [],
+          "unresolved_nonnumeric_keys": []
+        },
+        "disposition": "scored",
+        "reason_code": null,
+        "phase": "reward_construction",
+        "training_target_status": "score_transform",
+        "worker_isolation": {
+          "worker_cap_eff": "0000000000000000",
+          "worker_no_new_privs": 1,
+          "worker_tests_fds": 0
+        },
+        "seccomp_profile_sha256": "afb4934b023cfceaaec1a9d752ca3f801aaa96eb2e59abe6e7ea16976948e080",
+        "tighten_sockets": false
+      },
+      "provenance": {
+        "runtime": "pymc",
+        "verifier": "harbor_pymc_l0_l6",
+        "profile": "strict",
+        "admission_contract": "synthstats.harbor.numeric_admission.v1"
+      }
+    }
+  ],
+  "scalarization": {
+    "method": "weighted_sum",
+    "component_names": [
+      "holdout_elpd"
+    ],
+    "weights": {
+      "holdout_elpd": 1.0
+    },
+    "lower_log_reward_bound": -20.0,
+    "temperature": 7.189448462878068,
+    "diagnostics": {
+      "baseline_score": -38.80436683481206,
+      "gold_score": -31.61491838193399
+    }
+  }
+}

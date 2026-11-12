@@ -7,7 +7,13 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Annotated, Any, Final, Literal
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import (
+    Field,
+    ValidationInfo,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 from synthstats_schemas.base import (
     REWARD_ARTIFACT_SCHEMA_VERSION,
@@ -16,6 +22,16 @@ from synthstats_schemas.base import (
     JsonValue,
     MetricValue,
     require_json_serializable,
+)
+from synthstats_schemas.canonical import canonical_json_bytes
+from synthstats_schemas.numeric_reward import (
+    NUMERIC_ADMISSION_CONTRACT,
+    STOCK_ADMISSION_CONTRACT,
+    PyMCRefusedReward,
+    PyMCScoredReward,
+    StockRefusedReward,
+    StockScoredReward,
+    validate_refused_compilation_row,
 )
 
 
@@ -65,7 +81,8 @@ class Disposition(StrEnum):
     unjudged = "unjudged"
     # The trial never produced a reward because our infrastructure failed
     # (a timeout, a resource fault, an unresolved execution, an unreliable
-    # sampler). Null values exclude infrastructure faults from training and scoring.
+    # sampler). Recorded as null, never as zero: the fault is ours, not the
+    # agent's, and a numeric value would train or score on it.
     infrastructure = "infrastructure"
 
 
@@ -176,6 +193,11 @@ class RewardSourceSpec(ContractModel):
     def allowed_producers_accept_json_arrays(cls, value: Any) -> Any:
         return _tuple_from_json_array(value)
 
+    @field_serializer("allowed_producers", mode="wrap")
+    def allowed_producers_as_wire_list(self, value: Any, handler: Any) -> Any:
+        # The wire form is a JSON array; the field holds the immutable tuple.
+        return list(handler(value))
+
     @field_validator("name")
     @classmethod
     def name_is_clean(cls, value: str) -> str:
@@ -249,6 +271,7 @@ _CATALOG_SPECS: Final[tuple[RewardSourceSpec, ...]] = (
         allowed_producers=(
             "ppl_synth_data.validation.compilation",
             "ppl_synth_data.harbor.validator_template",
+            "ppl_synth_data.harbor.pymc_verifier",
         ),
         description="Compilation or type-check verifier reward.",
     ),
@@ -264,15 +287,12 @@ _CATALOG_SPECS: Final[tuple[RewardSourceSpec, ...]] = (
         description="Structured-output formatting verifier reward.",
     ),
     RewardSourceSpec(
-        name="validation.expected_information_gain",
+        name="validation.qualified_checks",
         evidence_kind=EvidenceKind.verifier,
         truth_owner=TruthOwner.verifier,
         trainable=True,
-        allowed_producers=(
-            "ppl_synth_data.eval.metrics.eig",
-            "ppl_synth_data.eval.orchestrator",
-        ),
-        description="Verifier-owned Bayesian expected information gain reward.",
+        allowed_producers=("ppl_synth_data.reward.scalarization",),
+        description="Fraction of a task's qualified verifier checks passed.",
     ),
     RewardSourceSpec(
         name="heuristic.llm_rubric",
@@ -280,8 +300,7 @@ _CATALOG_SPECS: Final[tuple[RewardSourceSpec, ...]] = (
         truth_owner=TruthOwner.heuristic,
         trainable=True,
         allowed_producers=(
-            "ppl_synth_data.validation.llm_rubric",
-            "ppl_synth_data.eval.rubrics.llm",
+            "ppl_synth_data.reward.scalarization",
         ),
         description="LLM rubric or critique-derived heuristic reward.",
     ),
@@ -351,18 +370,9 @@ _CATALOG_SPECS: Final[tuple[RewardSourceSpec, ...]] = (
         truth_owner=TruthOwner.heuristic,
         trainable=False,
         allowed_producers=(
-            "ppl_synth_data.eval.orchestrator",
             "ppl_synth_data.harbor.validator_template",
         ),
         description="Exception while scoring a trial.",
-    ),
-    RewardSourceSpec(
-        name="heuristic.no_submission",
-        evidence_kind=EvidenceKind.heuristic,
-        truth_owner=TruthOwner.heuristic,
-        trainable=False,
-        allowed_producers=("ppl_synth_data.eval.orchestrator",),
-        description="Trial ended without a submitted program.",
     ),
     RewardSourceSpec(
         name="unjudged",
@@ -431,8 +441,14 @@ class RewardComponent(ContractModel):
     producer: Annotated[str, Field(min_length=1)]
     weight: float = 1.0
     log_contribution: float | None = Field(default=None, ge=TRAINING_LOG_REWARD_MIN)
-    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
-    turn_index: int | None = Field(default=None, ge=0)
+    # The wire component shapes carry neither key; a defaulted one must not
+    # reach a dump the strict shapes would refuse.
+    confidence: float | None = Field(
+        default=None, ge=0.0, le=1.0, exclude_if=lambda value: value is None
+    )
+    turn_index: int | None = Field(
+        default=None, ge=0, exclude_if=lambda value: value is None
+    )
     metrics: dict[str, MetricValue] = Field(default_factory=dict)
     diagnostics: dict[str, JsonValue] = Field(default_factory=dict)
     provenance: dict[str, JsonValue] = Field(default_factory=dict)
@@ -518,13 +534,24 @@ class RewardScalarization(ContractModel):
     component_names: tuple[Annotated[str, Field(min_length=1)], ...]
     weights: dict[str, float] = Field(default_factory=dict)
     lower_log_reward_bound: float = Field(default=TRAINING_LOG_REWARD_MIN)
-    temperature: float | None = Field(default=None, gt=0.0)
-    diagnostics: dict[str, JsonValue] = Field(default_factory=dict)
+    # Two wire scalarizations carry neither key: the defaulted ones must not
+    # reach a dump the strict shapes would refuse.
+    temperature: float | None = Field(
+        default=None, gt=0.0, exclude_if=lambda value: value is None
+    )
+    diagnostics: dict[str, JsonValue] = Field(
+        default_factory=dict, exclude_if=lambda value: not value
+    )
 
     @field_validator("component_names", mode="before")
     @classmethod
     def component_names_accept_json_arrays(cls, value: Any) -> Any:
         return _tuple_from_json_array(value)
+
+    @field_serializer("component_names", mode="wrap")
+    def component_names_as_wire_list(self, value: Any, handler: Any) -> Any:
+        # The wire form is a JSON array; the field holds the immutable tuple.
+        return list(handler(value))
 
     @field_validator("method", mode="before")
     @classmethod
@@ -601,6 +628,11 @@ class RewardRubric(ContractModel):
     def criteria_accept_json_arrays(cls, value: Any) -> Any:
         return _tuple_from_json_array(value)
 
+    @field_serializer("criteria", mode="wrap")
+    def criteria_as_wire_list(self, value: Any, handler: Any) -> Any:
+        # The wire form is a JSON array; the field holds the immutable tuple.
+        return list(handler(value))
+
     @field_validator("provenance")
     @classmethod
     def provenance_is_json(cls, value: dict[str, JsonValue]) -> dict[str, JsonValue]:
@@ -622,6 +654,12 @@ class RewardArtifact(ContractModel):
     schema_version: Literal["synthstats.harbor.reward.v1"] = (
         REWARD_ARTIFACT_SCHEMA_VERSION
     )
+    # The refused-row kind: a policy refusal is its own row kind.
+    # None on a scored row and on a refusal recorded before the kind existed;
+    # the wire rows without it must not see it in a dump.
+    kind: Literal["compilation_refusal", "policy_refusal"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     reward_source: Annotated[str, Field(min_length=1)]
     evidence_kind: EvidenceKind
     truth_owner: TruthOwner
@@ -635,7 +673,53 @@ class RewardArtifact(ContractModel):
     components: dict[str, float | None] = Field(default_factory=dict)
     reward_components: tuple[RewardComponent, ...] = Field(default_factory=tuple)
     scalarization: RewardScalarization | None = None
-    rubric: RewardRubric | None = None
+    # The wire rows carry no rubric key; a defaulted one must not reach a
+    # dump the strict shapes would refuse.
+    rubric: RewardRubric | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_numeric_verifier_contract(cls, data: Any, info: ValidationInfo) -> Any:
+        if not isinstance(data, dict):
+            return data
+        context = info.context if isinstance(info.context, dict) else {}
+        provenance = data.get("provenance")
+        declared = provenance.get("admission_contract") if isinstance(provenance, dict) else None
+        diagnostics = data.get("diagnostics")
+        disposition = diagnostics.get("disposition") if isinstance(diagnostics, dict) else None
+        expected = context.get("expected_contract")
+        if (
+            data.get("reward_source") == "validation.pymc_elpd"
+            and (declared in (STOCK_ADMISSION_CONTRACT, NUMERIC_ADMISSION_CONTRACT)
+                 or expected in (STOCK_ADMISSION_CONTRACT, NUMERIC_ADMISSION_CONTRACT))
+            and disposition is None
+        ):
+            raise ValueError("declared verifier contract requires diagnostics.disposition")
+        if STOCK_ADMISSION_CONTRACT in (declared, expected):
+            # The stock verifier's rows: its scored and refused ELPD rows have strict
+            # shapes, and an expected contract must be the declared one.
+            if expected is not None and declared != expected:
+                raise ValueError("the declared admission contract is not the expected one")
+            if disposition == "scored" and data.get("reward_source") == "validation.pymc_elpd":
+                StockScoredReward.model_validate(data)
+            elif disposition == "refused" and data.get("reward_source") == "validation.pymc_elpd":
+                StockRefusedReward.model_validate(data)
+            return data
+        if declared != NUMERIC_ADMISSION_CONTRACT and expected != NUMERIC_ADMISSION_CONTRACT:
+            return data
+        # The scored branch gates on its source exactly as both refused
+        # branches do: only the ELPD row
+        # has the scored numeric contract; a scored row of another source
+        # validates under the general envelope.
+        if disposition == "scored" and data.get("reward_source") == "validation.pymc_elpd":
+            PyMCScoredReward.model_validate(data)
+        elif disposition == "refused" and data.get("reward_source") == "validation.pymc_elpd":
+            PyMCRefusedReward.model_validate(data)
+        elif disposition == "refused" and data.get("reward_source") == "validation.compilation":
+            validate_refused_compilation_row(data)
+        return data
 
     @model_validator(mode="before")
     @classmethod
@@ -646,7 +730,7 @@ class RewardArtifact(ContractModel):
         ppl_synth_data Harbor validator template) carry the same information;
         an explicitly supplied map is still checked against the typed list.
         """
-        if not isinstance(data, dict) or data.get("components"):
+        if not isinstance(data, dict) or "components" in data:
             return data
         typed = data.get("reward_components")
         if not typed:
@@ -671,6 +755,11 @@ class RewardArtifact(ContractModel):
     @classmethod
     def reward_components_accept_json_arrays(cls, value: Any) -> Any:
         return _tuple_from_json_array(value)
+
+    @field_serializer("reward_components", mode="wrap")
+    def reward_components_as_wire_list(self, value: Any, handler: Any) -> Any:
+        # The wire form is a JSON array; the field holds the immutable tuple.
+        return list(handler(value))
 
     @field_validator("evidence_kind", mode="before")
     @classmethod
@@ -769,7 +858,8 @@ class RewardArtifact(ContractModel):
                 "when diagnostics.disposition is 'unjudged' or 'infrastructure'"
             )
         if is_infrastructure:
-            # Null values exclude infrastructure faults from training and scoring.
+            # The fault is ours, so every recorded value is null, never a
+            # number: a numeric field would train or score on our failure.
             numeric = []
             if self.training_log_reward is not None:
                 numeric.append("training_log_reward")
@@ -1014,4 +1104,24 @@ class RewardArtifact(ContractModel):
                     "trainable reward training_log_reward must match auditable "
                     "scalarization"
                 )
+        return self
+
+    @model_validator(mode="after")
+    def verifier_component_copies_match(self) -> "RewardArtifact":
+        if self.reward_source == "validation.pymc_elpd":
+            for component in self.reward_components:
+                if (
+                    component.source == self.reward_source
+                    and canonical_json_bytes(component.diagnostics)
+                    != canonical_json_bytes(self.diagnostics)
+                ):
+                    raise ValueError("PyMC component diagnostics must match artifact diagnostics")
+        if self.reward_source == "validation.compilation":
+            for component in self.reward_components:
+                if (
+                    component.source == self.reward_source
+                    and canonical_json_bytes(component.metrics)
+                    != canonical_json_bytes(self.metrics)
+                ):
+                    raise ValueError("compilation component metrics must match artifact metrics")
         return self

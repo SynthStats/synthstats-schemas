@@ -1,6 +1,12 @@
 """Strict wire contracts for the SynthStats ecosystem."""
 
 from synthstats_schemas.qualified_image import QualifiedImageReceiptV1
+from synthstats_schemas.verdicts import (
+    ATTRIBUTION_TABLE,
+    Attribution,
+    VerdictStatus,
+    attribution_for,
+)
 
 from synthstats_schemas.base import (
     CARD_SCHEMA_VERSION,
@@ -10,35 +16,11 @@ from synthstats_schemas.base import (
     TRAINING_LOG_REWARD_MIN,
     ContractModel,
 )
-from synthstats_schemas.atif_rl_sidecar import (
-    ATIFRLCall,
-    ATIFRLSidecar,
-    ATIFServingIdentity,
-)
+from synthstats_schemas.canonical import canonical_json_bytes
 from synthstats_schemas.identity import (
     SynthStatsSchemasIdentity,
     require_synthstats_schemas_identity,
     synthstats_schemas_identity,
-)
-from synthstats_schemas.predictive import (
-    F64Bits,
-    NormalJointDrawV1,
-    NormalJointSampleBlockV1,
-    NormalPredictiveRunSpecV1,
-    NormalPredictiveWorkerAttemptV1,
-    NormalPredictiveWorkerFailureV1,
-    NormalPredictiveWorkerSuccessV1,
-    PredictiveWireError,
-    decode_f64_bits,
-    decode_normal_joint_sample_block,
-    decode_normal_predictive_run_spec,
-    decode_normal_predictive_worker_attempt,
-    encode_f64_bits,
-    encode_normal_joint_sample_block,
-    encode_normal_predictive_run_spec,
-    encode_normal_predictive_worker_attempt,
-    validate_normal_joint_sample_blocks,
-    validate_normal_predictive_worker_attempts,
 )
 from synthstats_schemas.reward import (
     REWARD_SOURCE_CATALOG,
@@ -79,18 +61,22 @@ from synthstats_schemas.release import (
     SFTReleaseManifest,
     SFTReleaseRowArtifact,
 )
-from synthstats_schemas.receipt import (
-    POLICY_WEIGHT_CHANGE_REPORT_SCHEMA_VERSION,
+from synthstats_schemas.acceptance_bundle import (
     POSTTRAINING_ACCEPTANCE_BUNDLE_SCHEMA_VERSION,
-    TRAINING_RECEIPT_SCHEMA_VERSION,
+    BundleCapability,
     BundleEvidenceReceiptEntry,
     BundleFile,
     BundleTrainingReceiptEntry,
     PostTrainingAcceptanceBundle,
     SemanticValidationSettings,
-    TrainingReceipt,
+    TrainingReceiptCapability,
     TrainingReceiptValidationConfig,
     get_capability_validation_requirements,
+)
+from synthstats_schemas.receipt import (
+    POLICY_WEIGHT_CHANGE_REPORT_SCHEMA_VERSION,
+    TRAINING_RECEIPT_SCHEMA_VERSION,
+    TrainingReceipt,
 )
 from synthstats_schemas.selection import (
     MIN_HOLDOUT_FOR_SELECTION,
@@ -114,7 +100,6 @@ from synthstats_schemas.task_contract import (
     ImportRule,
     TaskContract,
     TaskContractV1,
-    ScorerRules,
     parse_task_contract,
     RealDomain,
     IntegerDomain,
@@ -156,9 +141,6 @@ from synthstats_schemas.training import (
 )
 
 __all__ = [
-    "ATIFRLCall",
-    "ATIFRLSidecar",
-    "ATIFServingIdentity",
     "QualifiedImageReceiptV1",
     "ATIFExportManifest",
     "ATIFTrialArtifact",
@@ -189,23 +171,15 @@ __all__ = [
     "QueryLedgerEvent",
     "EvidenceCard",
     "EvidenceKind",
-    "F64Bits",
     "GenerationRecord",
     "LIVE_RICH_REWARD_MANIFEST_SCHEMA_VERSION",
     "LiveRichRewardManifest",
     "MIXED_ATIF_MANIFEST_SCHEMA_VERSION",
     "MixedATIFAssemblyManifest",
     "MixedATIFTrialArtifact",
-    "NormalJointDrawV1",
-    "NormalJointSampleBlockV1",
-    "NormalPredictiveRunSpecV1",
-    "NormalPredictiveWorkerAttemptV1",
-    "NormalPredictiveWorkerFailureV1",
-    "NormalPredictiveWorkerSuccessV1",
     "POLICY_WEIGHT_CHANGE_REPORT_SCHEMA_VERSION",
     "POSTTRAINING_ACCEPTANCE_BUNDLE_SCHEMA_VERSION",
     "PromptView",
-    "PredictiveWireError",
     "RECORD_SCHEMA_VERSION",
     "REWARD_ARTIFACT_SCHEMA_VERSION",
     "REWARD_SOURCE_CATALOG",
@@ -234,11 +208,13 @@ __all__ = [
     "TBTrainingTrajectory",
     "TRAINING_LOG_REWARD_MIN",
     "TRAINING_RECEIPT_SCHEMA_VERSION",
+    "BundleCapability",
     "BundleEvidenceReceiptEntry",
     "BundleFile",
     "BundleTrainingReceiptEntry",
     "PostTrainingAcceptanceBundle",
     "SemanticValidationSettings",
+    "TrainingReceiptCapability",
     "CandidateKey",
     "FitnessRecord",
     "GateOutcome",
@@ -255,7 +231,6 @@ __all__ = [
     "ProgramTraceStep",
     "TaskContract",
     "TaskContractV1",
-    "ScorerRules",
     "parse_task_contract",
     "RealDomain",
     "IntegerDomain",
@@ -273,15 +248,8 @@ __all__ = [
     "TruthOwner",
     "ensure_reward_source_registered",
     "ensure_reward_source_trainable",
-    "decode_f64_bits",
-    "decode_normal_joint_sample_block",
-    "decode_normal_predictive_run_spec",
-    "decode_normal_predictive_worker_attempt",
-    "encode_f64_bits",
-    "encode_normal_joint_sample_block",
-    "encode_normal_predictive_run_spec",
-    "encode_normal_predictive_worker_attempt",
     "canonical_json",
+    "canonical_json_bytes",
     "contract_sha256",
     "contract_template_sha256",
     "get_capability_validation_requirements",
@@ -289,6 +257,8 @@ __all__ = [
     "list_reward_sources",
     "require_synthstats_schemas_identity",
     "synthstats_schemas_identity",
-    "validate_normal_joint_sample_blocks",
-    "validate_normal_predictive_worker_attempts",
+    "ATTRIBUTION_TABLE",
+    "Attribution",
+    "VerdictStatus",
+    "attribution_for",
 ]

@@ -2,18 +2,26 @@
 
 from __future__ import annotations
 
-import math
 from collections import Counter
 from pathlib import Path
 from typing import Annotated, Final, Literal, TypeAlias
 
-from pydantic import Field, TypeAdapter, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    Field,
+    NonNegativeInt,
+    TypeAdapter,
+    model_validator,
+)
 
 from synthstats_schemas.base import (
     TRAINING_LOG_REWARD_MIN,
     ContractModel,
     JsonValue,
+    NonEmptyStr,
+    Sha256,
 )
+from synthstats_schemas.receipt import _validate_canonical_relative_posix_path
 from synthstats_schemas.reward import ensure_reward_source_registered
 
 ATIF_EXPORT_MANIFEST_SCHEMA_VERSION: Final[Literal["ppl_synth_data.atif_export.v1"]] = (
@@ -29,55 +37,38 @@ LIVE_RICH_REWARD_MANIFEST_SCHEMA_VERSION: Final[
     Literal["ppl_synth_data.live_rich_reward.v1"]
 ] = "ppl_synth_data.live_rich_reward.v1"
 
-Sha256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
-NonEmptyStr = Annotated[str, Field(min_length=1)]
+def _relative_data_ref(value: str) -> str:
+    return _validate_canonical_relative_posix_path(
+        value, field_name="data_ref"
+    )
 
 
-def _validate_safe_id(value: str, *, field_name: str) -> str:
-    path = Path(value)
+def _registered_reward_source(name: str) -> str:
+    ensure_reward_source_registered(name)
+    return name
+
+
+def _safe_id(value: str) -> str:
     if (
-        "\x00" in value
-        or path.name != value
-        or any(part in {"", ".", ".."} for part in path.parts)
+        value in {".", ".."}
+        or "\x00" in value
+        or "/" in value
+        or "\\" in value
     ):
-        raise ValueError(f"{field_name} must be a single safe path segment")
+        raise ValueError("id must be a single safe path segment")
     return value
 
 
-def _validate_relative_data_ref(value: str) -> str:
-    path = Path(value)
-    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
-        raise ValueError("data_ref must be safely run-relative")
-    return value
-
-
-def _validate_counts(
-    counts: dict[str, int],
-    *,
-    expected_total: int,
-    field_name: str,
-) -> dict[str, int]:
-    if not counts:
-        raise ValueError(f"{field_name} must not be empty")
-    total = 0
-    for key, value in counts.items():
-        if not key:
-            raise ValueError(f"{field_name} keys must be non-empty")
-        if value < 0:
-            raise ValueError(f"{field_name} values must be non-negative")
-        total += value
-    if total != expected_total:
-        raise ValueError(f"{field_name} sum must equal count_exported")
-    return counts
-
-
-def _require_registered_sources(sources: list[str]) -> None:
-    for source in sources:
-        ensure_reward_source_registered(source)
+SafeId = Annotated[NonEmptyStr, AfterValidator(_safe_id)]
+RelativeDataRef = Annotated[NonEmptyStr, AfterValidator(_relative_data_ref)]
+RegisteredRewardSource = Annotated[
+    NonEmptyStr, AfterValidator(_registered_reward_source)
+]
+CountMap = Annotated[dict[NonEmptyStr, NonNegativeInt], Field(min_length=1)]
 
 
 class _LineageDigests(ContractModel):
-    data_ref: NonEmptyStr
+    data_ref: RelativeDataRef
     data_ref_sha256: Sha256
     prompt_sha256: Sha256
     completion_sha256: Sha256
@@ -86,48 +77,27 @@ class _LineageDigests(ContractModel):
     env_spec_sha256: Sha256
     stage_g_row_sha256: Sha256
 
-    @field_validator("data_ref")
-    @classmethod
-    def data_ref_is_safe(cls, value: str) -> str:
-        return _validate_relative_data_ref(value)
-
 
 class ATIFTrialArtifact(_LineageDigests):
-    atif_id: NonEmptyStr
+    atif_id: SafeId
     trial_dir: NonEmptyStr
     runtime: NonEmptyStr
     split: NonEmptyStr
     local_record_id: NonEmptyStr
     prompt_id: NonEmptyStr
     env_id: NonEmptyStr
-    reward_source: NonEmptyStr
-    training_log_reward: float = Field(ge=TRAINING_LOG_REWARD_MIN)
+    reward_source: RegisteredRewardSource
+    training_log_reward: float = Field(
+        ge=TRAINING_LOG_REWARD_MIN, allow_inf_nan=False
+    )
     trajectory_sha256: Sha256
     reward_sha256: Sha256
 
-    @field_validator("atif_id")
-    @classmethod
-    def atif_id_is_safe(cls, value: str) -> str:
-        return _validate_safe_id(value, field_name="atif_id")
-
-    @field_validator("reward_source")
-    @classmethod
-    def reward_source_is_registered(cls, value: str) -> str:
-        ensure_reward_source_registered(value)
-        return value
-
-    @field_validator("training_log_reward")
-    @classmethod
-    def training_log_reward_is_finite(cls, value: float) -> float:
-        if not math.isfinite(value):
-            raise ValueError("training_log_reward must be finite")
-        return value
-
 
 class MixedATIFTrialArtifact(_LineageDigests):
-    atif_id: NonEmptyStr
+    atif_id: SafeId
     trial_dir: NonEmptyStr
-    source_run_id: NonEmptyStr
+    source_run_id: SafeId
     source_run_dir: NonEmptyStr
     source_atif_dir: NonEmptyStr
     runtime: NonEmptyStr
@@ -135,31 +105,14 @@ class MixedATIFTrialArtifact(_LineageDigests):
     local_record_id: NonEmptyStr
     prompt_id: NonEmptyStr
     env_id: NonEmptyStr
-    reward_source: NonEmptyStr
-    training_log_reward: float = Field(ge=TRAINING_LOG_REWARD_MIN)
+    reward_source: RegisteredRewardSource
+    training_log_reward: float = Field(
+        ge=TRAINING_LOG_REWARD_MIN, allow_inf_nan=False
+    )
     source_trajectory_sha256: Sha256
     source_reward_sha256: Sha256
     trajectory_sha256: Sha256
     reward_sha256: Sha256
-
-    @field_validator("atif_id", "source_run_id")
-    @classmethod
-    def ids_are_safe(cls, value: str, info: object) -> str:
-        field_name = getattr(info, "field_name", "id")
-        return _validate_safe_id(value, field_name=field_name)
-
-    @field_validator("reward_source")
-    @classmethod
-    def reward_source_is_registered(cls, value: str) -> str:
-        ensure_reward_source_registered(value)
-        return value
-
-    @field_validator("training_log_reward")
-    @classmethod
-    def training_log_reward_is_finite(cls, value: float) -> float:
-        if not math.isfinite(value):
-            raise ValueError("training_log_reward must be finite")
-        return value
 
 
 class ATIFExportManifest(ContractModel):
@@ -172,12 +125,12 @@ class ATIFExportManifest(ContractModel):
     out_dir: NonEmptyStr
     metric_name: NonEmptyStr
     baseline: NonEmptyStr
-    baseline_value: float
-    reward_temperature: float
+    baseline_value: float = Field(allow_inf_nan=False)
+    reward_temperature: float = Field(allow_inf_nan=False)
     runtime: NonEmptyStr
     split: NonEmptyStr
     reward_mode: Literal["semantic_metric", "embedded_reward_artifact"]
-    reward_source: NonEmptyStr
+    reward_source: RegisteredRewardSource
     policy_logprobs_present: Literal[False]
     training_input_mode: Literal["message_only_requires_policy_rescore"]
     direct_offline_collect_training_supported: Literal[False]
@@ -185,26 +138,12 @@ class ATIFExportManifest(ContractModel):
     count_input: int = Field(ge=0)
     count_exported: int = Field(ge=0)
     count_unique_atif_ids: int = Field(ge=0)
-    split_counts: dict[NonEmptyStr, int]
+    split_counts: CountMap
     atif_ids: list[NonEmptyStr]
     count_dropped: int = Field(ge=0)
     trial_dirs: list[NonEmptyStr]
     trial_artifacts: dict[NonEmptyStr, ATIFTrialArtifact]
     dropped: list[dict[str, JsonValue]]
-
-    @field_validator("reward_source")
-    @classmethod
-    def reward_source_is_registered(cls, value: str) -> str:
-        ensure_reward_source_registered(value)
-        return value
-
-    @field_validator("baseline_value", "reward_temperature")
-    @classmethod
-    def floats_are_finite(cls, value: float, info: object) -> float:
-        if not math.isfinite(value):
-            field_name = getattr(info, "field_name", "value")
-            raise ValueError(f"{field_name} must be finite")
-        return value
 
     @model_validator(mode="after")
     def counts_and_artifacts_match(self) -> "ATIFExportManifest":
@@ -220,6 +159,8 @@ class ATIFExportManifest(ContractModel):
             raise ValueError("count_unique_atif_ids must equal unique atif_ids count")
         if set(self.trial_artifacts) != set(self.atif_ids):
             raise ValueError("trial_artifacts keys must match atif_ids")
+        if any(key != artifact.atif_id for key, artifact in self.trial_artifacts.items()):
+            raise ValueError("trial_artifacts keys must match their embedded atif_id")
         artifact_dirs = {
             artifact.trial_dir for artifact in self.trial_artifacts.values()
         }
@@ -233,11 +174,8 @@ class ATIFExportManifest(ContractModel):
         )
         if dict(split_counts) != dict(self.split_counts):
             raise ValueError("split_counts must match trial_artifacts splits")
-        _validate_counts(
-            self.split_counts,
-            expected_total=self.count_exported,
-            field_name="split_counts",
-        )
+        if sum(self.split_counts.values()) != self.count_exported:
+            raise ValueError("split_counts sum must equal count_exported")
         if any(
             artifact.reward_source != self.reward_source
             for artifact in self.trial_artifacts.values()
@@ -256,14 +194,16 @@ class MixedATIFAssemblyManifest(ContractModel):
     digest_algorithm: Literal["sha256"]
     timestamp_utc: NonEmptyStr
     out_dir: NonEmptyStr
-    source_run_dirs: dict[NonEmptyStr, NonEmptyStr]
-    source_atif_dirs: dict[NonEmptyStr, NonEmptyStr]
-    source_manifest_sha256: dict[NonEmptyStr, Sha256]
-    trial_source_run_ids: dict[NonEmptyStr, NonEmptyStr]
-    source_counts: dict[NonEmptyStr, int]
-    runtime_counts: dict[NonEmptyStr, int]
-    reward_source_counts: dict[NonEmptyStr, int]
-    split_counts: dict[NonEmptyStr, int]
+    source_run_dirs: dict[SafeId, NonEmptyStr] = Field(min_length=1)
+    source_atif_dirs: dict[SafeId, NonEmptyStr]
+    source_manifest_sha256: dict[SafeId, Sha256]
+    trial_source_run_ids: dict[SafeId, SafeId]
+    source_counts: CountMap
+    runtime_counts: CountMap
+    reward_source_counts: dict[RegisteredRewardSource, NonNegativeInt] = Field(
+        min_length=1
+    )
+    split_counts: CountMap
     count_exported: int = Field(ge=0)
     row_count: int = Field(ge=0)
     count_dropped: int = Field(default=0, ge=0)
@@ -285,14 +225,14 @@ class MixedATIFAssemblyManifest(ContractModel):
         if self.count_exported != len(self.trial_dirs):
             raise ValueError("count_exported must equal trial_dirs length")
         source_ids = set(self.source_run_dirs)
-        if not source_ids:
-            raise ValueError("source_run_dirs must not be empty")
         if set(self.source_atif_dirs) != source_ids:
             raise ValueError("source_atif_dirs keys must match source_run_dirs")
         if set(self.source_manifest_sha256) != source_ids:
             raise ValueError("source_manifest_sha256 keys must match source_run_dirs")
         if set(self.trial_source_run_ids) != set(self.trial_artifacts):
             raise ValueError("trial_source_run_ids keys must match trial_artifacts")
+        if any(key != artifact.atif_id for key, artifact in self.trial_artifacts.items()):
+            raise ValueError("trial_artifacts keys must match their embedded atif_id")
         if self.count_unique_atif_ids != len(set(self.atif_ids)):
             raise ValueError("count_unique_atif_ids must equal unique atif_ids count")
         artifact_ids = [artifact.atif_id for artifact in self.trial_artifacts.values()]
@@ -304,8 +244,6 @@ class MixedATIFAssemblyManifest(ContractModel):
         if set(self.trial_dirs) != artifact_dirs:
             raise ValueError("trial_dirs must match trial_artifacts trial_dir values")
         for trial_name, source_run_id in self.trial_source_run_ids.items():
-            _validate_safe_id(trial_name, field_name="trial_source_run_ids key")
-            _validate_safe_id(source_run_id, field_name="source_run_id")
             if source_run_id not in source_ids:
                 raise ValueError(
                     "trial_source_run_ids references unknown source_run_id"
@@ -323,26 +261,15 @@ class MixedATIFAssemblyManifest(ContractModel):
                 raise ValueError("artifact source_run_dir must match source_run_dirs")
             if artifact.source_atif_dir != self.source_atif_dirs[source_run_id]:
                 raise ValueError("artifact source_atif_dir must match source_atif_dirs")
-        _validate_counts(
-            self.source_counts,
-            expected_total=self.count_exported,
-            field_name="source_counts",
+        count_maps = (
+            ("source_counts", self.source_counts),
+            ("runtime_counts", self.runtime_counts),
+            ("reward_source_counts", self.reward_source_counts),
+            ("split_counts", self.split_counts),
         )
-        _validate_counts(
-            self.runtime_counts,
-            expected_total=self.count_exported,
-            field_name="runtime_counts",
-        )
-        _validate_counts(
-            self.reward_source_counts,
-            expected_total=self.count_exported,
-            field_name="reward_source_counts",
-        )
-        _validate_counts(
-            self.split_counts,
-            expected_total=self.count_exported,
-            field_name="split_counts",
-        )
+        for field_name, counts in count_maps:
+            if sum(counts.values()) != self.count_exported:
+                raise ValueError(f"{field_name} sum must equal count_exported")
         if dict(Counter(self.trial_source_run_ids.values())) != dict(
             self.source_counts
         ):
@@ -361,7 +288,6 @@ class MixedATIFAssemblyManifest(ContractModel):
             Counter(artifact.split for artifact in self.trial_artifacts.values())
         ) != dict(self.split_counts):
             raise ValueError("split_counts must match trial_artifacts")
-        _require_registered_sources(list(self.reward_source_counts))
         return self
 
 
@@ -373,13 +299,13 @@ class RichRewardATIFExportManifest(ContractModel):
     source_atif_dir: NonEmptyStr
     out_dir: NonEmptyStr
     rubric_scores_path: NonEmptyStr
-    reward_source: NonEmptyStr
-    base_reward_sources: list[NonEmptyStr]
-    component_reward_sources: list[NonEmptyStr]
+    reward_source: RegisteredRewardSource
+    base_reward_sources: list[RegisteredRewardSource]
+    component_reward_sources: list[RegisteredRewardSource]
     rubric_id: NonEmptyStr
     rubric_version: NonEmptyStr
-    heuristic_weight: float
-    process_weight: float
+    heuristic_weight: float = Field(allow_inf_nan=False)
+    process_weight: float = Field(allow_inf_nan=False)
     count_input: int = Field(ge=0)
     count_exported: int = Field(ge=0)
     count_dropped: int = Field(ge=0)
@@ -387,33 +313,12 @@ class RichRewardATIFExportManifest(ContractModel):
     dropped: list[dict[str, JsonValue]]
     training_input_mode: Literal["message_only_requires_policy_rescore"]
 
-    @field_validator("reward_source")
-    @classmethod
-    def reward_source_is_registered(cls, value: str) -> str:
-        ensure_reward_source_registered(value)
-        return value
-
-    @field_validator("heuristic_weight", "process_weight")
-    @classmethod
-    def weights_are_finite(cls, value: float, info: object) -> float:
-        if not math.isfinite(value):
-            field_name = getattr(info, "field_name", "weight")
-            raise ValueError(f"{field_name} must be finite")
-        return value
-
     @model_validator(mode="after")
     def counts_and_sources_match(self) -> "RichRewardATIFExportManifest":
         if self.count_input != self.count_exported + self.count_dropped:
             raise ValueError("count_input must equal count_exported + count_dropped")
         if self.count_exported != len(self.atif_ids):
             raise ValueError("count_exported must equal atif_ids length")
-        _require_registered_sources(
-            [
-                self.reward_source,
-                *self.base_reward_sources,
-                *self.component_reward_sources,
-            ]
-        )
         return self
 
 
@@ -423,68 +328,37 @@ class LiveRichRewardManifest(ContractModel):
         LIVE_RICH_REWARD_MANIFEST_SCHEMA_VERSION
     )
     trial_dir: NonEmptyStr
-    atif_id: NonEmptyStr
+    atif_id: SafeId
     base_trajectory_path: NonEmptyStr
-    reward_source: NonEmptyStr
-    component_reward_sources: list[NonEmptyStr]
-    component_names: list[NonEmptyStr]
+    reward_source: RegisteredRewardSource
+    component_reward_sources: list[RegisteredRewardSource]
+    component_names: list[NonEmptyStr] = Field(min_length=1)
     scalarization: dict[str, JsonValue] | None
     rubric: dict[str, JsonValue]
-    written_reward_paths: list[NonEmptyStr]
-    written_trajectory_paths: list[NonEmptyStr]
-
-    @field_validator("atif_id")
-    @classmethod
-    def atif_id_is_safe(cls, value: str) -> str:
-        return _validate_safe_id(value, field_name="atif_id")
-
-    @field_validator("reward_source")
-    @classmethod
-    def reward_source_is_registered(cls, value: str) -> str:
-        ensure_reward_source_registered(value)
-        return value
-
-    @model_validator(mode="after")
-    def sources_and_outputs_are_present(self) -> "LiveRichRewardManifest":
-        if not self.component_names:
-            raise ValueError("component_names must not be empty")
-        if not self.written_reward_paths:
-            raise ValueError("written_reward_paths must not be empty")
-        if not self.written_trajectory_paths:
-            raise ValueError("written_trajectory_paths must not be empty")
-        _require_registered_sources(
-            [self.reward_source, *self.component_reward_sources]
-        )
-        return self
+    written_reward_paths: list[NonEmptyStr] = Field(min_length=1)
+    written_trajectory_paths: list[NonEmptyStr] = Field(min_length=1)
 
 
 class SFTReleaseRowArtifact(ContractModel):
-    row_id: NonEmptyStr
-    runtime: NonEmptyStr
+    row_id: SafeId
+    runtime: SafeId
     split: Literal["train", "validation", "test"]
-    split_group_id: NonEmptyStr
+    split_group_id: SafeId
     row_sha256: Sha256
-
-    @field_validator("row_id", "runtime", "split_group_id")
-    @classmethod
-    def ids_are_safe(cls, value: str, info: object) -> str:
-        field_name = getattr(info, "field_name", "id")
-        return _validate_safe_id(value, field_name=field_name)
 
 
 class SFTReleaseManifest(ContractModel):
     schema_version: Literal["synthstats.sft_release.v1"]
     count_written: int = Field(ge=0)
     count_unique_split_groups: int = Field(ge=0)
-    row_split_counts: dict[Literal["train", "validation", "test"], int]
-    split_group_counts: dict[Literal["train", "validation", "test"], int]
-    split_group_assignments: dict[NonEmptyStr, Literal["train", "validation", "test"]]
-    row_artifacts: dict[NonEmptyStr, SFTReleaseRowArtifact]
+    row_split_counts: dict[Literal["train", "validation", "test"], NonNegativeInt]
+    split_group_counts: dict[Literal["train", "validation", "test"], NonNegativeInt]
+    split_group_assignments: dict[SafeId, Literal["train", "validation", "test"]]
+    row_artifacts: dict[SafeId, SFTReleaseRowArtifact]
 
     @model_validator(mode="after")
     def counts_and_assignments_match(self) -> "SFTReleaseManifest":
         for row_key, artifact in self.row_artifacts.items():
-            _validate_safe_id(row_key, field_name="row_artifacts key")
             if row_key != artifact.row_id:
                 raise ValueError("row_artifacts keys must match artifact row_id values")
 
@@ -494,11 +368,6 @@ class SFTReleaseManifest(ContractModel):
         if any(len(splits) != 1 for splits in group_splits.values()):
             raise ValueError("each split_group_id must belong to exactly one split")
 
-        for split_group_id in self.split_group_assignments:
-            _validate_safe_id(
-                split_group_id,
-                field_name="split_group_assignments key",
-            )
         expected_assignments = {
             split_group_id: next(iter(splits))
             for split_group_id, splits in group_splits.items()

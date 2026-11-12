@@ -1,0 +1,83 @@
+{
+  "schema_version": "synthstats.harbor.reward.v1",
+  "reward": 0.0,
+  "reward_source": "validation.compilation",
+  "evidence_kind": "verifier",
+  "truth_owner": "verifier",
+  "producer": "ppl_synth_data.harbor.validator_template",
+  "metrics": {
+    "cascade_reward": 0.0,
+    "passed_layers": 0,
+    "total_layers": 6
+  },
+  "reward_components": [
+    {
+      "name": "compilation_cascade",
+      "kind": "terminal_verifier",
+      "value": 0.0,
+      "source": "validation.compilation",
+      "evidence_kind": "verifier",
+      "truth_owner": "verifier",
+      "producer": "ppl_synth_data.harbor.validator_template",
+      "weight": 1.0,
+      "log_contribution": -20.0,
+      "confidence": 1.0,
+      "metrics": {
+        "cascade_reward": 0.0,
+        "passed_layers": 0,
+        "total_layers": 6
+      },
+      "diagnostics": {
+        "failed_layer": "L0_parse",
+        "failure_reason": "SyntaxError: '[' was never closed (<unknown>, line 79)",
+        "semantic_status": "critical"
+      },
+      "provenance": {
+        "runtime": "pymc",
+        "verifier": "harbor_pymc_l0_l5",
+        "profile": "strict"
+      }
+    }
+  ],
+  "scalarization": {
+    "method": "weighted_sum",
+    "component_names": [
+      "compilation_cascade"
+    ],
+    "weights": {
+      "compilation_cascade": 1.0
+    },
+    "lower_log_reward_bound": -20.0,
+    "diagnostics": {
+      "reward_transform": "binary_log_reward"
+    }
+  },
+  "diagnostics": {
+    "details": {
+      "L0_parse": {
+        "passed": false,
+        "time_s": 0.0,
+        "reason": "SyntaxError: '[' was never closed (<unknown>, line 79)"
+      }
+    },
+    "failed_layer": "L0_parse",
+    "failure_reason": "SyntaxError: '[' was never closed (<unknown>, line 79)",
+    "semantic_status": "critical",
+    "worker_isolation": {
+      "worker_cap_eff": "0000000000000000",
+      "worker_no_new_privs": 1,
+      "worker_tests_fds": 0
+    }
+  },
+  "provenance": {
+    "runtime": "pymc",
+    "verifier": "harbor_pymc_l0_l5",
+    "profile": "strict"
+  },
+  "reward_transform": {
+    "kind": "binary_log_reward",
+    "pass_log_reward": 0.0,
+    "lower_log_reward_bound": -20.0
+  },
+  "training_log_reward": -20.0
+}

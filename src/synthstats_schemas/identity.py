@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import stat
 from importlib import import_module, metadata
@@ -13,6 +12,7 @@ from typing import Annotated, Literal, TypeAlias
 from pydantic import AfterValidator, Field, StringConstraints
 
 from synthstats_schemas.base import ContractModel
+from synthstats_schemas.canonical import canonical_json_bytes
 
 _DISTRIBUTION = "synthstats-schemas"
 _READ_SIZE = 1024 * 1024
@@ -78,7 +78,7 @@ def synthstats_schemas_identity() -> SynthStatsSchemasIdentity:
             "synthstats-schemas distribution metadata changed during identity capture"
         )
 
-    canonical_manifest = _canonical_json(manifest).encode("utf-8")
+    canonical_manifest = canonical_json_bytes(manifest)
     distribution_name, version = distribution_after
     return SynthStatsSchemasIdentity(
         schema_version="synthstats.schemas_identity.v1",
@@ -96,8 +96,8 @@ def require_synthstats_schemas_identity(
 
     actual = synthstats_schemas_identity()
     if actual != expected:
-        expected_json = _canonical_json(expected.model_dump(mode="json"))
-        actual_json = _canonical_json(actual.model_dump(mode="json"))
+        expected_json = canonical_json_bytes(expected.model_dump(mode="json")).decode("utf-8")
+        actual_json = canonical_json_bytes(actual.model_dump(mode="json")).decode("utf-8")
         raise RuntimeError(
             "synthstats-schemas identity mismatch: "
             f"expected={expected_json}; actual={actual_json}"
@@ -329,10 +329,3 @@ def _stat_fingerprint(value: os.stat_result) -> _StatFingerprint:
     )
 
 
-def _canonical_json(value: object) -> str:
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    )

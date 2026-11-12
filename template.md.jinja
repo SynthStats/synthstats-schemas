@@ -1,0 +1,17 @@
+{%- set newline = "\n" -%}
+{{- "## " ~ versiondata.version ~ " (" ~ versiondata.date ~ ")" ~ newline }}
+{%- for section, section_categories in sections.items() %}
+    {%- for category, definition in definitions.items() if category in sections[section] %}
+        {{- newline ~ "### " ~ definition["name"] ~ newline ~ newline }}
+        {%- if category == "terms" %}
+            {{- "| Term | Meaning |" ~ newline ~ "| --- | --- |" ~ newline }}
+        {%- elif category != "examples" %}
+            {{- "| Name | Change | Action |" ~ newline ~ "| --- | --- | --- |" ~ newline }}
+        {%- endif %}
+        {%- for text, issues in (sections[section][category]|dictsort if category == "terms" else sections[section][category].items()) %}
+            {{- text ~ newline }}
+            {%- if category == "examples" %}{{- newline }}{%- endif %}
+        {%- endfor %}
+    {%- endfor %}
+{%- endfor %}
+{{- newline -}}

@@ -1,19 +1,24 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/mark.svg">
+    <source media="(prefers-color-scheme: dark)" srcset="assets/mark-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="assets/mark.svg">
     <img src="assets/mark.svg" alt="SynthStats: synthstats-schemas" width="140">
   </picture>
-</p>
-
-<p align="center">
-  <a href="https://synthstats.org"><img src="https://img.shields.io/badge/website-synthstats.org-5C56A5?labelColor=5A6078" alt="Website: synthstats.org"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/licence-MIT-5C56A5?labelColor=5A6078" alt="Licence: MIT"></a>
-  <a href="pyproject.toml"><img src="https://img.shields.io/badge/python-%E2%89%A53.11-5C56A5?labelColor=5A6078" alt="Python: ≥3.11"></a>
 </p>
 
 # synthstats-schemas
 
 Pydantic schemas for SynthStats tasks, trajectories, rewards and receipts.
+
+<p align="center">
+  <a href="https://synthstats.org"><img src="https://img.shields.io/badge/website-synthstats.org-5C56A5?labelColor=5A6078" alt="Website: synthstats.org"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/licence-MIT-5C56A5?labelColor=5A6078" alt="Licence: MIT"></a>
+  <a href="pyproject.toml"><img src="https://img.shields.io/badge/python-%E2%89%A53.12-5C56A5?labelColor=5A6078" alt="Python: ≥3.12"></a>
+</p>
+
+<p align="center">
+  <img src="assets/demo.gif" alt="Terminal demo: parse a task contract and print its interaction mode" width="800">
+</p>
 
 ## Install
 
@@ -39,13 +44,15 @@ contract = parse_task_contract('''{
     "row_count_key": "n", "keys": ["x", "y"], "target_key": "y"
   },
   "provided_names": {"pm": "pymc", "np": "numpy"},
-  "allowed_imports": [],
   "conventions": [],
   "environment": {
     "image_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
     "python": "3.12", "packages": {}
   },
-  "interaction": {"mode": "pool", "query_budget": 3, "observation_key": "y"}
+  "interaction": {"mode": "pool", "query_budget": 3, "observation_key": "y"},
+  "required_predictor_groups": [["x"]],
+  "relationship": "conditional_response",
+  "row_semantics": "matched_record"
 }''')
 encoded = canonical_json(contract)
 assert parse_task_contract(encoded) == contract
@@ -55,5 +62,4 @@ PY
 
 ## Optional dependencies
 
-The read-only W&B project probe needs `uv pip install '.[wandb]'`.
 Tests need `uv pip install '.[test]'`, then `.venv/bin/pytest`.

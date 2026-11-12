@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=69", "wheel"]
+requires = ["setuptools==84.2.1", "setuptools-scm==10.3.4"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "synthstats-schemas"
-version = "0.20.0"
+dynamic = ["version"]
 description = "Shared Pydantic schemas for SynthStats reward provenance and trace evidence."
 readme = "README.md"
 license = "MIT"
@@ -13,9 +13,46 @@ requires-python = ">=3.12"
 dependencies = ["pydantic>=2.12", "harbor==0.25.0"]
 
 [project.optional-dependencies]
-test = ["pytest>=8"]
+test = [
+    "hypothesis>=6.160.0",
+    "jsonschema>=4.18",
+    "pytest>=8",
+]
 validation = ["jsonschema>=4.18"]
-wandb = ["wandb>=0.30"]  # The probe needs the service API introduced in 0.30.
+
+[tool.setuptools_scm]
+fallback_version = "0.0.0+unknown"
+
+[tool.towncrier]
+directory = "changes"
+filename = "CHANGELOG.md"
+template = "template.md.jinja"
+package_dir = "src"
+
+[[tool.towncrier.type]]
+directory = "terms"
+name = "Terms"
+
+[[tool.towncrier.type]]
+directory = "added"
+name = "Added"
+
+[[tool.towncrier.type]]
+directory = "changed"
+name = "Changed"
+
+[[tool.towncrier.type]]
+directory = "fixed"
+name = "Fixed"
+
+[[tool.towncrier.type]]
+directory = "removed"
+name = "Removed"
+
+[[tool.towncrier.type]]
+directory = "examples"
+name = "Examples"
+
 
 [tool.setuptools.packages.find]
 where = ["src"]

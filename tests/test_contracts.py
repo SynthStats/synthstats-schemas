@@ -20,12 +20,16 @@ def contract_payload(version="synthstats.task_contract.v2"):
             "row_count_key": "n", "keys": ["x", "y"], "target_key": "y",
         },
         "provided_names": {"pm": "pymc", "np": "numpy"},
-        "allowed_imports": [],
         "conventions": [],
         "environment": {"image_digest": "sha256:" + "0" * 64, "python": "3.12", "packages": {}},
     }
-    if version == "synthstats.task_contract.v2":
+    if version == "synthstats.task_contract.v1":
+        payload["allowed_imports"] = []
+    else:
         payload["interaction"] = {"mode": "pool", "query_budget": 3, "observation_key": "y"}
+        payload["required_predictor_groups"] = [["x"]]
+        payload["relationship"] = "conditional_response"
+        payload["row_semantics"] = "matched_record"
     return payload
 
 
@@ -49,15 +53,17 @@ def test_contract_rejects_observation_column_outside_declared_target():
 def review_payload():
     return {
         "name": "review", "kind": "independent_review", "path": "review.json",
-        "sha256": "0" * 64, "model_id": "example-review-model", "route": "example-provider",
+        "sha256": "0" * 64, "capabilities": ["independent_review"],
+        "model_id": "example-review-model", "route": "example-provider",
         "output_sha256": "1" * 64, "heuristic_only": True, "classification": "review",
         "review_verdict": "GO", "unresolved_p0_count": 0, "unresolved_p1_count": 0,
     }
 
 
 def test_complete_independent_review_is_accepted():
-    receipt = BundleEvidenceReceiptEntry.model_validate(review_payload())
+    receipt = BundleEvidenceReceiptEntry.validate_python(review_payload())
     assert receipt.kind == "independent_review"
+    assert receipt.capabilities == ["independent_review"]
     assert receipt.review_verdict == "GO"
 
 
@@ -69,7 +75,7 @@ def test_independent_review_rejects_missing_required_metadata(field):
     payload = review_payload()
     del payload[field]
     with pytest.raises(ValidationError, match=field):
-        BundleEvidenceReceiptEntry.model_validate(payload)
+        BundleEvidenceReceiptEntry.validate_python(payload)
 
 
 @pytest.mark.parametrize("field,value", [
@@ -78,5 +84,5 @@ def test_independent_review_rejects_missing_required_metadata(field):
 def test_independent_review_rejects_unresolved_findings_or_rejection(field, value):
     payload = review_payload()
     payload[field] = value
-    with pytest.raises(ValidationError, match="independent_review evidence requires"):
-        BundleEvidenceReceiptEntry.model_validate(payload)
+    with pytest.raises(ValidationError, match=field):
+        BundleEvidenceReceiptEntry.validate_python(payload)

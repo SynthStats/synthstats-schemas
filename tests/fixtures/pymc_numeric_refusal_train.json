@@ -1,0 +1,242 @@
+{
+  "schema_version": "synthstats.harbor.reward.v1",
+  "reward": 0.0,
+  "reward_source": "validation.pymc_elpd",
+  "evidence_kind": "verifier",
+  "truth_owner": "verifier",
+  "producer": "ppl_synth_data.harbor.pymc_verifier",
+  "metrics": {
+    "passed_layers": 5,
+    "total_layers": 7,
+    "train_elpd_loo": null,
+    "pareto_k_max": null
+  },
+  "diagnostics": {
+    "details": {
+      "L0_parse": {
+        "passed": true,
+        "time_s": 0.0
+      },
+      "L1_ast_safety": {
+        "passed": true,
+        "time_s": 0.001
+      },
+      "L2_model_build": {
+        "passed": true,
+        "time_s": 1.152
+      },
+      "L3_harbor_pymc_strict_profile": {
+        "passed": true,
+        "time_s": 0.679
+      },
+      "L4_exploit_heuristics": {
+        "passed": true,
+        "time_s": 0.675
+      },
+      "L5_data_perturbation": {
+        "passed": null,
+        "time_s": 0.0,
+        "assessment": "not_applicable",
+        "phase": "original",
+        "cause": "no_acquired_rows",
+        "training_n_obs": 0,
+        "disposition": null,
+        "reason_code": null,
+        "reason": "no acquired rows to perturb"
+      }
+    },
+    "structural_details_status": "available",
+    "failed_layer": "L6_holdout_elpd",
+    "failure_reason": "L3_harbor_pymc_strict_profile: target_support_mismatch: continuous likelihood Normal on integer-valued observed 'y_obs': count and binary targets require a discrete likelihood",
+    "semantic_status": "critical",
+    "elpd_status": "binding_refused",
+    "elpd_error": "L3_harbor_pymc_strict_profile: target_support_mismatch: continuous likelihood Normal on integer-valued observed 'y_obs': count and binary targets require a discrete likelihood",
+    "observed_families": {
+      "y_obs": "Normal"
+    },
+    "training_n_obs": 0,
+    "row_latent_probe": {
+      "assessed": true,
+      "reason": "registered_input_resize",
+      "names": []
+    },
+    "inference_method": "prior_forward",
+    "fit_warning_categories": {},
+    "train_elpd_loo_status": "not_applicable",
+    "pareto_k_status": "not_applicable",
+    "pareto_k_warning": null,
+    "density_target_kinds": {
+      "y_obs": "continuous"
+    },
+    "predictive_output_validated": true,
+    "predictive_conditioning": {
+      "method": "pymc.sample_posterior_predictive",
+      "sample_shape": [
+        1,
+        200
+      ]
+    },
+    "verifier_profile": {
+      "status": "supported",
+      "effective": {
+        "cxx": "",
+        "mode": "FAST_COMPILE",
+        "linker": "auto",
+        "optimizer": "o4",
+        "floatX": "float64"
+      },
+      "c_thunks": false,
+      "use_cloop": false
+    },
+    "transplant_probe_status": "not_assessed",
+    "refusal_code": "L3_harbor_pymc_strict_profile",
+    "disposition": "refused",
+    "reason_code": "L3_harbor_pymc_strict_profile",
+    "phase": "graph_profile",
+    "training_target_status": "refusal_zero",
+    "worker_isolation": {
+      "worker_cap_eff": "0000000000000000",
+      "worker_no_new_privs": 1,
+      "worker_tests_fds": 0
+    },
+    "seccomp_profile_sha256": "afb4934b023cfceaaec1a9d752ca3f801aaa96eb2e59abe6e7ea16976948e080",
+    "tighten_sockets": false
+  },
+  "provenance": {
+    "runtime": "pymc",
+    "verifier": "harbor_pymc_l0_l6",
+    "profile": "strict",
+    "admission_contract": "synthstats.harbor.numeric_admission.v1"
+  },
+  "reward_transform": {
+    "kind": "baseline_normalized_log_reward",
+    "lower_log_reward_bound": -20.0,
+    "error_policy": "candidate_refusal_zero",
+    "authoritative": true
+  },
+  "training_log_reward": -20.0,
+  "components": {
+    "pymc_elpd_error": 0.0
+  },
+  "reward_components": [
+    {
+      "name": "pymc_elpd_error",
+      "kind": "penalty",
+      "value": 0.0,
+      "source": "validation.pymc_elpd",
+      "evidence_kind": "verifier",
+      "truth_owner": "verifier",
+      "producer": "ppl_synth_data.harbor.pymc_verifier",
+      "weight": 1.0,
+      "log_contribution": -20.0,
+      "metrics": {},
+      "diagnostics": {
+        "details": {
+          "L0_parse": {
+            "passed": true,
+            "time_s": 0.0
+          },
+          "L1_ast_safety": {
+            "passed": true,
+            "time_s": 0.001
+          },
+          "L2_model_build": {
+            "passed": true,
+            "time_s": 1.152
+          },
+          "L3_harbor_pymc_strict_profile": {
+            "passed": true,
+            "time_s": 0.679
+          },
+          "L4_exploit_heuristics": {
+            "passed": true,
+            "time_s": 0.675
+          },
+          "L5_data_perturbation": {
+            "passed": null,
+            "time_s": 0.0,
+            "assessment": "not_applicable",
+            "phase": "original",
+            "cause": "no_acquired_rows",
+            "training_n_obs": 0,
+            "disposition": null,
+            "reason_code": null,
+            "reason": "no acquired rows to perturb"
+          }
+        },
+        "structural_details_status": "available",
+        "failed_layer": "L6_holdout_elpd",
+        "failure_reason": "L3_harbor_pymc_strict_profile: target_support_mismatch: continuous likelihood Normal on integer-valued observed 'y_obs': count and binary targets require a discrete likelihood",
+        "semantic_status": "critical",
+        "elpd_status": "binding_refused",
+        "elpd_error": "L3_harbor_pymc_strict_profile: target_support_mismatch: continuous likelihood Normal on integer-valued observed 'y_obs': count and binary targets require a discrete likelihood",
+        "observed_families": {
+          "y_obs": "Normal"
+        },
+        "training_n_obs": 0,
+        "row_latent_probe": {
+          "assessed": true,
+          "reason": "registered_input_resize",
+          "names": []
+        },
+        "inference_method": "prior_forward",
+        "fit_warning_categories": {},
+        "train_elpd_loo_status": "not_applicable",
+        "pareto_k_status": "not_applicable",
+        "pareto_k_warning": null,
+        "density_target_kinds": {
+          "y_obs": "continuous"
+        },
+        "predictive_output_validated": true,
+        "predictive_conditioning": {
+          "method": "pymc.sample_posterior_predictive",
+          "sample_shape": [
+            1,
+            200
+          ]
+        },
+        "verifier_profile": {
+          "status": "supported",
+          "effective": {
+            "cxx": "",
+            "mode": "FAST_COMPILE",
+            "linker": "auto",
+            "optimizer": "o4",
+            "floatX": "float64"
+          },
+          "c_thunks": false,
+          "use_cloop": false
+        },
+        "transplant_probe_status": "not_assessed",
+        "refusal_code": "L3_harbor_pymc_strict_profile",
+        "disposition": "refused",
+        "reason_code": "L3_harbor_pymc_strict_profile",
+        "phase": "graph_profile",
+        "training_target_status": "refusal_zero",
+        "worker_isolation": {
+          "worker_cap_eff": "0000000000000000",
+          "worker_no_new_privs": 1,
+          "worker_tests_fds": 0
+        },
+        "seccomp_profile_sha256": "afb4934b023cfceaaec1a9d752ca3f801aaa96eb2e59abe6e7ea16976948e080",
+        "tighten_sockets": false
+      },
+      "provenance": {
+        "runtime": "pymc",
+        "verifier": "harbor_pymc_l0_l6",
+        "profile": "strict",
+        "admission_contract": "synthstats.harbor.numeric_admission.v1"
+      }
+    }
+  ],
+  "scalarization": {
+    "method": "manual",
+    "component_names": [
+      "pymc_elpd_error"
+    ],
+    "weights": {
+      "pymc_elpd_error": 1.0
+    },
+    "lower_log_reward_bound": -20.0
+  }
+}
