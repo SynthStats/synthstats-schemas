@@ -4,13 +4,9 @@ from typing import Annotated, Literal, Self
 
 from pydantic import Field, model_validator
 
-from synthstats_schemas.base import ContractModel
+from synthstats_schemas.base import ContractModel, Sha256
 
-
-Sha256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$", min_length=64, max_length=64)]
-ImageDigest = Annotated[
-    str, Field(pattern=r"^sha256:[0-9a-f]{64}$", min_length=71, max_length=71),
-]
+ImageDigest = Annotated[str, Field(pattern=r"^sha256:[0-9a-f]{64}$")]
 
 
 class QualifiedImageReceiptV1(ContractModel):

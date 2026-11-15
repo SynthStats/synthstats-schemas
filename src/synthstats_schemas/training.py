@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from typing import Annotated, Literal, TypeAlias
 
 from pydantic import Field, TypeAdapter, model_validator
@@ -32,9 +31,6 @@ class _BaseTrainingTrajectory(ContractModel):
         for token_id in self.token_ids:
             if isinstance(token_id, bool) or token_id < 0:
                 raise ValueError("token_ids must be non-negative integers")
-        for logprob in self.logprobs:
-            if not math.isfinite(float(logprob)):
-                raise ValueError("logprobs must be finite")
         return self
 
 
@@ -48,9 +44,6 @@ class TBTrainingTrajectory(_BaseTrainingTrajectory):
             return self
         if len(self.eos_logprobs) != len(self.token_ids):
             raise ValueError("eos_logprobs length must match token_ids length")
-        for value in self.eos_logprobs:
-            if not math.isfinite(float(value)):
-                raise ValueError("eos_logprobs must be finite")
         return self
 
 
@@ -62,9 +55,6 @@ class SubTBTrainingTrajectory(_BaseTrainingTrajectory):
     def eos_is_required_and_aligned(self) -> "SubTBTrainingTrajectory":
         if len(self.eos_logprobs) != len(self.token_ids):
             raise ValueError("eos_logprobs length must match token_ids length")
-        for value in self.eos_logprobs:
-            if not math.isfinite(float(value)):
-                raise ValueError("eos_logprobs must be finite")
         return self
 
 

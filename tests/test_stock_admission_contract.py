@@ -207,3 +207,20 @@ def test_producer_rounded_stock_scores_validate(elpd):
     record["training_log_reward"] = round(log_reward, 6)
     record["reward"] = round(math.exp(min(log_reward, 20.0)), 6)
     RewardArtifact.model_validate(record, context=CONTEXT)
+
+
+def test_producer_rounded_stock_scores_validate_at_two_ulp_reconstruction() -> None:
+    # Reconstructing total = (elpd / 10) * 10 lands two ulp from the emitted
+    # total once elpd's ulp passes the 5e-5 rounding term (this value's ulp is
+    # 6.1e-5; the reconstruction error 1.22e-4 exceeds 5e-5 + 1 ulp = 1.11e-4).
+    # A faithful producer is refused, so the tolerance must cover two ulp.
+    record = _scored()
+    elpd = -452436122859.11053
+    log_reward = max((elpd + 40.0) / 30.00000001, -20.0)
+    rounded_elpd = round(elpd, 4)
+    record["metrics"].update(holdout_elpd=rounded_elpd, avg_holdout_logp=elpd / 10)
+    record["components"]["holdout_elpd"] = rounded_elpd
+    record["reward_components"][0].update(value=rounded_elpd, log_contribution=round(log_reward, 6))
+    record["training_log_reward"] = round(log_reward, 6)
+    record["reward"] = round(math.exp(min(log_reward, 20.0)), 6)
+    RewardArtifact.model_validate(record, context=CONTEXT)

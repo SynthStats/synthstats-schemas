@@ -102,6 +102,10 @@ UNJUDGED_REASON_CODES: Final[frozenset[str]] = frozenset(
         "unsupported_verifier_profile",
         "sampler_unreliable",
         "metric_unavailable",
+        "compiler_unavailable",
+        "invalid_reward_declaration",
+        "task_data_mismatch",
+        "reducer_environment_mismatch",
     }
 )
 
@@ -477,28 +481,6 @@ class RewardComponent(ContractModel):
             )
         return value
 
-    @field_validator("value", "weight", "log_contribution")
-    @classmethod
-    def floats_are_finite(cls, value: float | None, info: object) -> float | None:
-        if value is None:
-            return None
-        if not math.isfinite(float(value)):
-            field_name = getattr(info, "field_name", "float")
-            raise ValueError(f"{field_name} must be finite")
-        return float(value)
-
-    @field_validator("metrics")
-    @classmethod
-    def component_metrics_are_finite(
-        cls, value: dict[str, MetricValue]
-    ) -> dict[str, MetricValue]:
-        for key, metric in value.items():
-            if isinstance(metric, bool) or metric is None or isinstance(metric, str):
-                continue
-            if not math.isfinite(float(metric)):
-                raise ValueError(f"metric {key!r} must be finite")
-        return value
-
     @field_validator("diagnostics", "provenance")
     @classmethod
     def component_json_fields_are_json(
@@ -558,26 +540,6 @@ class RewardScalarization(ContractModel):
     def method_accepts_wire_string(cls, value: Any) -> Any:
         return _enum_from_wire_string(value, RewardScalarizationMethod)
 
-    @field_validator("weights")
-    @classmethod
-    def weights_are_finite(cls, value: dict[str, float]) -> dict[str, float]:
-        for key, weight in value.items():
-            if not math.isfinite(float(weight)):
-                raise ValueError(f"weight {key!r} must be finite")
-        return value
-
-    @field_validator("lower_log_reward_bound", "temperature")
-    @classmethod
-    def scalarization_floats_are_finite(
-        cls, value: float | None, info: object
-    ) -> float | None:
-        if value is None:
-            return None
-        if not math.isfinite(float(value)):
-            field_name = getattr(info, "field_name", "float")
-            raise ValueError(f"{field_name} must be finite")
-        return float(value)
-
     @field_validator("diagnostics")
     @classmethod
     def diagnostics_are_json(cls, value: dict[str, JsonValue]) -> dict[str, JsonValue]:
@@ -603,13 +565,6 @@ class RubricCriterion(ContractModel):
     criterion_id: Annotated[str, Field(min_length=1)]
     description: Annotated[str, Field(min_length=1)]
     weight: float = 1.0
-
-    @field_validator("weight")
-    @classmethod
-    def weight_is_finite(cls, value: float) -> float:
-        if not math.isfinite(float(value)):
-            raise ValueError("weight must be finite")
-        return float(value)
 
 
 class RewardRubric(ContractModel):
@@ -771,24 +726,6 @@ class RewardArtifact(ContractModel):
     def truth_owner_accepts_wire_string(cls, value: Any) -> Any:
         return _enum_from_wire_string(value, TruthOwner)
 
-    @field_validator("training_log_reward")
-    @classmethod
-    def training_log_reward_is_finite(cls, value: float | None) -> float | None:
-        if value is None:
-            return None
-        if not math.isfinite(value):
-            raise ValueError("training_log_reward must be finite")
-        return value
-
-    @field_validator("reward")
-    @classmethod
-    def reward_is_finite(cls, value: float | None) -> float | None:
-        if value is None:
-            return None
-        if not math.isfinite(value):
-            raise ValueError("reward must be finite")
-        return value
-
     @field_validator("reward_transform", "diagnostics", "provenance")
     @classmethod
     def object_fields_are_json(
@@ -796,30 +733,6 @@ class RewardArtifact(ContractModel):
     ) -> dict[str, JsonValue]:
         field_name = getattr(info, "field_name", "field")
         return _validate_jsonish(value, field_name=field_name)
-
-    @field_validator("metrics")
-    @classmethod
-    def metrics_are_finite(
-        cls, value: dict[str, MetricValue]
-    ) -> dict[str, MetricValue]:
-        for key, metric in value.items():
-            if isinstance(metric, bool) or metric is None or isinstance(metric, str):
-                continue
-            if not math.isfinite(float(metric)):
-                raise ValueError(f"metric {key!r} must be finite")
-        return value
-
-    @field_validator("components")
-    @classmethod
-    def components_are_finite(
-        cls, value: dict[str, float | None]
-    ) -> dict[str, float | None]:
-        for key, component in value.items():
-            if component is None:
-                continue
-            if not math.isfinite(float(component)):
-                raise ValueError(f"component {key!r} must be finite")
-        return value
 
     @model_validator(mode="after")
     def provenance_matches_catalog(self) -> "RewardArtifact":

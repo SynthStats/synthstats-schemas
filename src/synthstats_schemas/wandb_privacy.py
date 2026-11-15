@@ -50,9 +50,13 @@ def private_project_probe(
 def _execute_with_wandb(query: str, variables: Mapping[str, Any]) -> Mapping[str, Any]:
     import wandb  # only launchers that call the probe need the W&B SDK
 
-    api = wandb.Api(timeout=30)
+    api = wandb.Api()
     # W&B 0.30 runs GraphQL through wandb-core; its public Api has no other query method.
     service = getattr(api, "_service_api", None)
     if service is None:
-        raise RuntimeError("this probe needs the W&B 0.30 SDK, which runs GraphQL through Api._service_api")
+        installed = getattr(wandb, "__version__", "unknown")
+        raise RuntimeError(
+            "this probe needs the W&B 0.30 SDK, which runs GraphQL through "
+            f"Api._service_api; installed wandb is {installed}"
+        )
     return service.execute_graphql(query, dict(variables))

@@ -79,12 +79,3 @@ def test_table_is_total_over_the_producer_family():
     for layer in CONSTRUCT_LAYERS:
         for code in PRODUCER_NAMED_REASONS:
             assert (layer, None, code) in ATTRIBUTION_TABLE
-
-
-if __name__ == "__main__":
-    test_named_check_triple_resolves()
-    test_every_producer_named_reason_floors_as_candidate()
-    test_l5b_connectivity_failure_floors_as_candidate()
-    test_negative_controls_keep_their_attribution()
-    test_table_is_total_over_the_producer_family()
-    print("VERDICT-GUARD-TRIPLES-OK")

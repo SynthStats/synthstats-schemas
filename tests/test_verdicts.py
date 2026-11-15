@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import pytest
 
+from synthstats_schemas.numeric_reward import CompilationComponentDiagnostics
 from synthstats_schemas.verdicts import (
     ATTRIBUTION_TABLE,
     Attribution,
+    CascadeLayer,
     TimeoutOrigin,
     VerdictStatus,
     attribution_for,
@@ -182,3 +184,281 @@ def test_the_completed_rows_classify_by_the_emission_semantics() -> None:
         ("L0_parse", None, "failure_origin_unresolved"),
     ):
         assert ATTRIBUTION_TABLE[key] is Attribution.UNCHECKED, key
+
+
+
+# The reason codes whose side depends on who established the cause. A call
+# without trusted origin evidence never masks any of them. The first four have
+# rows that answer the program's failure when no origin is given; the last four
+# are raised by the host-side verifier only, so their rows are UNCHECKED.
+ORIGIN_DECIDED_CODES = (
+    "verifier_resource_failure",
+    "verifier_execution_unresolved",
+    "task_data_invalid",
+    "invalid_reward_reference",
+    "compiler_unavailable",
+    "task_data_mismatch",
+    "invalid_reward_declaration",
+    "reducer_environment_mismatch",
+)
+HOST_ONLY_CODES = (
+    "compiler_unavailable",
+    "task_data_mismatch",
+    "invalid_reward_declaration",
+    "reducer_environment_mismatch",
+)
+
+L0 = "L0_parse"
+L1 = "L1_ast_safety"
+L2 = "L2_model_build"
+L3 = "L3_harbor_pymc_strict_profile"
+L6 = "L6_holdout_elpd"
+L6B = "L6b_predictive_reducer"
+OURS = {"fault_origin": "trusted_runner"}
+DEADLINE = {"timeout_origin": "runner_deadline"}
+KILLED = {"timeout_origin": "runner_kill"}
+CANDIDATE = Attribution.CANDIDATE
+INFRASTRUCTURE = Attribution.INFRASTRUCTURE
+UNCHECKED = Attribution.UNCHECKED
+
+# Faults that are the program's own: (id, failed_layer, status, reason_code).
+PROGRAM_FAULTS = [
+    ("source_absent", L0, None, "submission_missing"),
+    ("source_refused", L1, None, "submission_refused"),
+    ("compile_error", L2, None, "compile_failed"),
+    ("compile_cpu_limit", L2, None, "compile_timeout"),
+    ("compile_heap_limit", L2, None, "compile_resources"),
+    ("run_cpu_limit", L3, None, "timeout"),
+    ("run_memory_limit", L3, None, "memory_limit"),
+    ("packet_over_size_limit", L3, None, "packet_too_large"),
+    ("run_exception", L3, None, "packet_rejected"),
+    ("reducer_invalid_packet", L6, "density_gate_failed", "predictive_output_invalid"),
+    ("reducer_nonfinite_samples", L6, "density_gate_failed", "predictive_samples_nonfinite"),
+    ("prediction_off_support", L6, None, "off_support"),
+    ("prediction_nonfinite", L6, None, "nonfinite"),
+    ("prediction_wrong_shape", L6, None, "wrong_shape"),
+    ("prediction_non_numeric", L6, None, "non_numeric"),
+]
+
+# Faults the verifier host observes itself, each with the trusted origin
+# argument its call site passes: (id, failed_layer, status, reason_code, origin).
+HOST_FAULTS = [
+    ("setup_fault", L3, "unjudged", "verifier_resource_failure", OURS),
+    ("source_copy_failed", L0, "unjudged", "verifier_resource_failure", OURS),
+    ("compiler_killed", L2, "unjudged", "verifier_resource_failure", OURS),
+    ("program_killed", L3, "unjudged", "verifier_resource_failure", OURS),
+    ("run_status_unclassified", L3, "unjudged", "verifier_resource_failure", OURS),
+    ("reducer_fault", L6B, "unjudged", "verifier_resource_failure", OURS),
+    ("compile_wall_ceiling", L2, "unjudged", "verifier_timeout", DEADLINE),
+    ("run_wall_ceiling", L3, "unjudged", "verifier_timeout", DEADLINE),
+    ("run_killed_after_ceiling", L3, "unjudged", "verifier_timeout", KILLED),
+    ("reducer_wall_ceiling", L6B, "unjudged", "verifier_timeout", DEADLINE),
+    ("execution_unresolved", L3, "unjudged", "verifier_execution_unresolved", OURS),
+    ("reducer_execution_unresolved", L6B, "unjudged", "verifier_execution_unresolved", OURS),
+    ("compiler_exit_without_diagnostic", L2, "unjudged", "compiler_unavailable", OURS),
+    ("replay_task_data_differs", L2, "unjudged", "task_data_mismatch", OURS),
+    ("reward_declaration_invalid", L6, "unjudged", "invalid_reward_declaration", OURS),
+    ("reducer_environment_differs", L6B, "unjudged", "reducer_environment_mismatch", OURS),
+]
+HOST_FAULT_IDS = [row[0] for row in HOST_FAULTS]
+
+
+def _evidence(origin, value):
+    """The same origin argument with another value."""
+    return {name: value for name in origin}
+
+
+@pytest.mark.parametrize(
+    ("layer", "status", "code"),
+    [row[1:] for row in PROGRAM_FAULTS],
+    ids=[row[0] for row in PROGRAM_FAULTS],
+)
+def test_a_program_fault_is_the_programs(layer, status, code) -> None:
+    assert attribution_for(layer, status, code) is CANDIDATE
+
+
+@pytest.mark.parametrize(
+    ("layer", "status", "code", "origin"),
+    [row[1:] for row in HOST_FAULTS],
+    ids=HOST_FAULT_IDS,
+)
+def test_a_host_fault_is_ours_with_its_origin_and_unchecked_without_it(
+    layer, status, code, origin
+) -> None:
+    assert attribution_for(layer, status, code, **origin) is INFRASTRUCTURE
+    assert attribution_for(layer, status, code) is UNCHECKED
+
+
+@pytest.mark.parametrize(
+    ("layer", "status", "code", "origin"),
+    [row[1:] for row in HOST_FAULTS],
+    ids=HOST_FAULT_IDS,
+)
+def test_a_forgotten_origin_never_charges_a_host_fault_to_the_program(
+    layer, status, code, origin
+) -> None:
+    assert attribution_for(layer, status, code) is not CANDIDATE
+    assert attribution_for(layer, status, code, **_evidence(origin, "unresolved")) is not CANDIDATE
+
+
+@pytest.mark.parametrize(
+    ("layer", "status", "code", "origin"),
+    [row[1:] for row in HOST_FAULTS],
+    ids=HOST_FAULT_IDS,
+)
+def test_a_host_fault_row_never_masks_without_trusted_origin(
+    layer, status, code, origin
+) -> None:
+    other_kind = (
+        {"fault_origin": "trusted_runner"}
+        if "timeout_origin" in origin
+        else {"timeout_origin": "runner_deadline"}
+    )
+    for evidence in (
+        {},
+        _evidence(origin, "unresolved"),
+        _evidence(origin, "candidate"),
+        other_kind,
+    ):
+        assert attribution_for(layer, status, code, **evidence) is not INFRASTRUCTURE, evidence
+
+
+@pytest.mark.parametrize(
+    ("layer", "status", "code", "origin"),
+    [row[1:] for row in HOST_FAULTS],
+    ids=HOST_FAULT_IDS,
+)
+def test_a_host_fault_is_the_programs_only_on_candidate_evidence(
+    layer, status, code, origin
+) -> None:
+    assert attribution_for(layer, status, code, **_evidence(origin, "candidate")) is CANDIDATE
+
+
+def test_the_reducer_layer_holds_only_the_reducers_own_faults() -> None:
+    reducer_rows = {key for key in ATTRIBUTION_TABLE if key[0] == L6B}
+    assert reducer_rows == {
+        (L6B, "unjudged", "verifier_resource_failure"),
+        (L6B, "unjudged", "verifier_timeout"),
+        (L6B, "unjudged", "reducer_environment_mismatch"),
+        (L6B, "unjudged", "verifier_execution_unresolved"),
+    }
+    assert all(ATTRIBUTION_TABLE[key] is UNCHECKED for key in reducer_rows)
+    assert all(row[1] != L6B for row in PROGRAM_FAULTS)
+
+
+def test_the_reducer_layer_is_a_cascade_layer_that_a_record_may_name() -> None:
+    assert CascadeLayer(L6B).value == L6B
+    diagnostics = CompilationComponentDiagnostics.model_validate(
+        {
+            "failed_layer": L6B,
+            "failure_reason": "the reducer stopped",
+            "semantic_status": "critical",
+            "disposition": "refused",
+            "reason_code": "verifier_resource_failure",
+        }
+    )
+    assert diagnostics.failed_layer is CascadeLayer(L6B)
+
+
+@pytest.mark.parametrize(
+    "triple",
+    [
+        (L2, None, "compiler_unavailable"),
+        (L2, None, "task_data_mismatch"),
+        (L3, None, "verifier_execution_unresolved"),
+        (L6, "unjudged", "reducer_environment_mismatch"),
+    ],
+    ids=lambda triple: "-".join(str(part) for part in triple),
+)
+def test_a_triple_without_a_row_raises_whatever_the_origin(triple) -> None:
+    for evidence in ({}, OURS, DEADLINE):
+        with pytest.raises(ValueError, match="no attribution row"):
+            attribution_for(*triple, **evidence)
+
+
+@pytest.mark.parametrize("code", ORIGIN_DECIDED_CODES)
+def test_a_fault_the_trusted_side_established_is_never_the_programs(code) -> None:
+    triples = [key for key in ATTRIBUTION_TABLE if key[2] == code]
+    assert triples, code
+    for key in triples:
+        assert attribution_for(*key, fault_origin="trusted_runner") is INFRASTRUCTURE, key
+
+
+@pytest.mark.parametrize("code", ORIGIN_DECIDED_CODES)
+def test_an_origin_decided_code_never_masks_without_trusted_origin(code) -> None:
+    triples = [key for key in ATTRIBUTION_TABLE if key[2] == code]
+    assert triples, code
+    for key in triples:
+        for origin in (None, "unresolved"):
+            assert attribution_for(*key, fault_origin=origin) is not INFRASTRUCTURE, (key, origin)
+        assert attribution_for(*key, fault_origin="candidate") is CANDIDATE, key
+
+
+@pytest.mark.parametrize("code", HOST_ONLY_CODES)
+def test_a_host_only_code_without_origin_is_unchecked(code) -> None:
+    triples = [key for key in ATTRIBUTION_TABLE if key[2] == code]
+    assert triples, code
+    for key in triples:
+        assert attribution_for(*key) is UNCHECKED, key
+
+
+@pytest.mark.parametrize(
+    "triple",
+    [
+        (L2, None, "task_data_invalid"),
+        (L6, "unjudged", "task_data_invalid"),
+        (L2, None, "invalid_reward_reference"),
+        (L6, "unjudged", "invalid_reward_reference"),
+    ],
+    ids=lambda triple: "-".join(str(part) for part in triple),
+)
+def test_the_valuations_unjudged_codes_are_ours_only_with_trusted_origin(triple) -> None:
+    assert attribution_for(*triple) is CANDIDATE
+    assert attribution_for(*triple, fault_origin="unresolved") is CANDIDATE
+    assert attribution_for(*triple, fault_origin="candidate") is CANDIDATE
+    assert attribution_for(*triple, fault_origin="trusted_runner") is INFRASTRUCTURE
+
+
+@pytest.mark.parametrize("origin", [None, "unresolved", "candidate", "trusted_runner"])
+def test_a_candidates_own_fault_ignores_origin_evidence(origin) -> None:
+    for layer, status, code in (
+        (L2, None, "compile_failed"),
+        (L3, None, "packet_rejected"),
+        (L6, "density_gate_failed", "predictive_output_invalid"),
+    ):
+        assert attribution_for(layer, status, code, fault_origin=origin) is CANDIDATE
+
+
+def test_origin_evidence_for_one_kind_of_fault_never_masks_another() -> None:
+    assert (
+        attribution_for(L2, None, "verifier_timeout", fault_origin="trusted_runner") is UNCHECKED
+    )
+    assert (
+        attribution_for(L2, None, "verifier_resource_failure", timeout_origin="runner_deadline")
+        is CANDIDATE
+    )
+
+
+def test_an_unknown_fault_origin_raises_whatever_the_reason() -> None:
+    with pytest.raises(ValueError):
+        attribution_for(L2, None, "compile_failed", fault_origin="other")
+    with pytest.raises(ValueError):
+        attribution_for(L2, None, "verifier_timeout", fault_origin="other")
+
+
+def test_fault_origin_accepts_the_enum_and_rejects_unknown_values() -> None:
+    from synthstats_schemas.verdicts import FaultOrigin
+
+    assert (
+        attribution_for(
+            L3, "unjudged", "verifier_resource_failure", fault_origin=FaultOrigin.TRUSTED_RUNNER
+        )
+        is INFRASTRUCTURE
+    )
+    with pytest.raises(ValueError):
+        attribution_for(L3, "unjudged", "verifier_resource_failure", fault_origin="other")
+
+
+def test_an_unlisted_triple_raises_whatever_the_origin() -> None:
+    with pytest.raises(ValueError, match="no attribution row"):
+        attribution_for(L3, None, "a_brand_new_reason", fault_origin="trusted_runner")

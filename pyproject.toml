@@ -28,6 +28,7 @@ directory = "changes"
 filename = "CHANGELOG.md"
 template = "template.md.jinja"
 package_dir = "src"
+start_string = "<!-- towncrier release notes start -->\n"
 
 [[tool.towncrier.type]]
 directory = "terms"

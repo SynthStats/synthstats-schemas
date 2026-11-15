@@ -1,5 +1,36 @@
 # Changelog
 
+<!-- towncrier release notes start -->
+
+## 0.23.0 (2026-11-15)
+
+### Terms
+
+| Term | Meaning |
+| --- | --- |
+| Verifier host | The component that runs the verifier outside the sandbox of the submitted program. It includes the trusted runner. A fault of the verifier host itself, such as running out of memory, is not the program's. A failure that the host observes in the program, such as a compile error, is. |
+
+### Added
+
+| Name | Change | Action |
+| --- | --- | --- |
+| `ATTRIBUTION_TABLE` | Rows for failures that the verifier host observes. `CANDIDATE` (the program's own failure, observed in the submitted program): `submission_missing` at `L0_parse`, `submission_refused` at `L1_ast_safety`, `compile_failed`, `compile_timeout` and `compile_resources` at `L2_model_build`, `timeout`, `memory_limit`, `packet_too_large` and `packet_rejected` at `L3_harbor_pymc_strict_profile`, and `off_support`, `nonfinite`, `wrong_shape` and `non_numeric` at `L6_holdout_elpd` with status `None` (predictions that the scoring of the held-out rows refuses). `UNCHECKED` without origin evidence (a fault of the verifier host itself), all with status `"unjudged"`: `verifier_resource_failure` at `L0_parse`, `L2_model_build`, `L3_harbor_pymc_strict_profile` and `L6b_predictive_reducer`; `verifier_timeout` at `L2_model_build`, `L3_harbor_pymc_strict_profile` and `L6b_predictive_reducer`; `verifier_execution_unresolved` at `L3_harbor_pymc_strict_profile` and `L6b_predictive_reducer`; `compiler_unavailable` and `task_data_mismatch` at `L2_model_build`; `invalid_reward_declaration` at `L6_holdout_elpd`; `reducer_environment_mismatch` at `L6b_predictive_reducer`. Every earlier row keeps its answer | Call the `"unjudged"` rows with `fault_origin` or, for a timeout, `timeout_origin` from the verifier host |
+| `CascadeLayer.L6B_PREDICTIVE_REDUCER` | The value `"L6b_predictive_reducer"` names the step where the trusted side turns the program's packet into the predictive score. Only the reducer's own faults use it | |
+| `FaultOrigin` | Values `"candidate"`, `"trusted_runner"` and `"unresolved"`. The trusted side establishes the origin of a fault of the verifier host, and `attribution_for` applies the value it receives. Import it from `synthstats_schemas.verdicts` | |
+| `UNJUDGED_REASON_CODES` | Adds `compiler_unavailable`, `invalid_reward_declaration`, `task_data_mismatch` and `reducer_environment_mismatch` | |
+| `attribution_for`: `fault_origin` | Keyword-only. For `verifier_resource_failure`, `verifier_execution_unresolved`, `task_data_invalid`, `invalid_reward_reference`, `compiler_unavailable`, `task_data_mismatch`, `invalid_reward_declaration` and `reducer_environment_mismatch`, `"trusted_runner"` returns `INFRASTRUCTURE` and `"candidate"` returns `CANDIDATE`. `"unresolved"` or no value returns the table row. Other reasons do not use it to decide. The value is checked on every call: one that `FaultOrigin` does not list raises `ValueError`, whatever the reason. A call on an earlier row answers as before when `fault_origin` is absent | Pass `fault_origin="trusted_runner"` when the trusted side established that the fault arose in the verifier host or its runner |
+
+### Changed
+
+| Name | Change | Action |
+| --- | --- | --- |
+| Finite-float fields | The reward component, scalarization, rubric, reward artifact and training trajectory contracts refuse NaN and infinite floats with the same `finite_number` error as before. The shared strict contract configuration (`allow_inf_nan=False`) that every contract model carries now does the refusing, in place of per-field validators | None |
+| `ImageDigest`, `Sha256` (qualified image receipt) | The generated JSON Schema of these strings carries the `pattern` and no longer carries `minLength` and `maxLength`. The pattern fixes the length, so the accepted strings are the same | Regenerate a stored copy of the JSON Schema |
+| `ATIFExportManifest`, `MixedATIFAssemblyManifest` | `trial_dirs` must list each directory as many times as `trial_artifacts` does. 0.22.1 compared the two as sets, so a list that repeated a directory or omitted one of two equal directories passed | List each trial directory once for each trial artifact |
+| `ATIFExportManifest`, `RichRewardATIFExportManifest` | `count_dropped` must equal the length of `dropped`. A manifest with another count is refused with `count_dropped must equal dropped length` | Set `count_dropped` to `len(dropped)` |
+| `StockScoredReward` | The check that the mean and the total agree allows the four-decimal half-step plus two ulp of the product of the mean and the observation count. It allowed one ulp. A row whose total differs from that product by up to that amount now validates | None |
+| `private_project_probe` | The default W&B query creates `wandb.Api()` with the SDK's default timeout. 0.22.1 passed a 30-second timeout. When the installed SDK has no `Api._service_api`, the error names the installed `wandb` version | None |
+
 ## 0.22.1 (2026-11-12)
 
 0.22.0 and 0.22.1 are published together; when upgrading from 0.20.0, read both sections.

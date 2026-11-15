@@ -578,9 +578,13 @@ class StockScoredReward(_StockEnvelope):
     def copies_agree(self) -> "StockScoredReward":
         component = self.reward_components[0]
         # The total is rounded to four decimals; the mean is emitted unrounded.
+        # A producer that reconstructs the total from the emitted mean lands up
+        # to two ulp away from it (measured: elpd -452436122859.11053 rounds
+        # (elpd/10)*10 two ulp off; 55 hits in 3M probed doubles), so the
+        # tolerance is the four-decimal half-step plus two ulp.
         estimated_total = self.metrics.avg_holdout_logp * self.metrics.hidden_n_obs
         if (not math.isfinite(estimated_total)
-                or abs(estimated_total - self.metrics.holdout_elpd) > 0.00005 + math.ulp(estimated_total)):
+                or abs(estimated_total - self.metrics.holdout_elpd) > 0.00005 + 2 * math.ulp(estimated_total)):
             raise ValueError("stock score mean and total disagree")
         _score_copies_agree(
             self,

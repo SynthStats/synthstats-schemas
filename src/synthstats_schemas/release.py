@@ -149,6 +149,8 @@ class ATIFExportManifest(ContractModel):
     def counts_and_artifacts_match(self) -> "ATIFExportManifest":
         if self.count_input != self.count_exported + self.count_dropped:
             raise ValueError("count_input must equal count_exported + count_dropped")
+        if self.count_dropped != len(self.dropped):
+            raise ValueError("count_dropped must equal dropped length")
         if self.count_exported != len(self.trial_artifacts):
             raise ValueError("count_exported must equal trial_artifacts length")
         if self.count_exported != len(self.atif_ids):
@@ -161,10 +163,9 @@ class ATIFExportManifest(ContractModel):
             raise ValueError("trial_artifacts keys must match atif_ids")
         if any(key != artifact.atif_id for key, artifact in self.trial_artifacts.items()):
             raise ValueError("trial_artifacts keys must match their embedded atif_id")
-        artifact_dirs = {
+        if Counter(self.trial_dirs) != Counter(
             artifact.trial_dir for artifact in self.trial_artifacts.values()
-        }
-        if set(self.trial_dirs) != artifact_dirs:
+        ):
             raise ValueError("trial_dirs must match trial_artifacts trial_dir values")
         artifact_ids = [artifact.atif_id for artifact in self.trial_artifacts.values()]
         if sorted(artifact_ids) != sorted(self.atif_ids):
@@ -238,10 +239,9 @@ class MixedATIFAssemblyManifest(ContractModel):
         artifact_ids = [artifact.atif_id for artifact in self.trial_artifacts.values()]
         if sorted(artifact_ids) != sorted(self.atif_ids):
             raise ValueError("trial_artifacts atif_id values must match atif_ids")
-        artifact_dirs = {
+        if Counter(self.trial_dirs) != Counter(
             artifact.trial_dir for artifact in self.trial_artifacts.values()
-        }
-        if set(self.trial_dirs) != artifact_dirs:
+        ):
             raise ValueError("trial_dirs must match trial_artifacts trial_dir values")
         for trial_name, source_run_id in self.trial_source_run_ids.items():
             if source_run_id not in source_ids:
@@ -317,6 +317,8 @@ class RichRewardATIFExportManifest(ContractModel):
     def counts_and_sources_match(self) -> "RichRewardATIFExportManifest":
         if self.count_input != self.count_exported + self.count_dropped:
             raise ValueError("count_input must equal count_exported + count_dropped")
+        if self.count_dropped != len(self.dropped):
+            raise ValueError("count_dropped must equal dropped length")
         if self.count_exported != len(self.atif_ids):
             raise ValueError("count_exported must equal atif_ids length")
         return self

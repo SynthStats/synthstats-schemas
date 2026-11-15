@@ -9,11 +9,21 @@ The triple is (failed_layer, status, reason_code): the layer the verifier
 failed at, the recorded outcome status, and the producer's reason code. The
 table is total over the triples the producer can emit. UNCHECKED is an explicit
 table value only where the evidence cannot tell a candidate failure from an
-infrastructure failure; such a row is treated as infrastructure (null and
-masked, never the floor), and its count is logged,
-because each UNCHECKED triple is a defect to resolve.
+infrastructure failure; such a row is treated as infrastructure (masked: its
+reward is null and never the floor reward that a program's own failure earns),
+and its count is logged, because each UNCHECKED triple is a defect to resolve.
+The producer is the package that writes the verdict records.
 
 The lookup table maps each supported triple to an attribution.
+
+Two kinds of failure are decided by who established the cause, not by the
+triple alone: a timeout (``timeout_origin``) and a fault of the verifier host
+(``fault_origin``). The verifier host and its runner are the trusted side: they
+run outside the sandbox of the submitted program. Each argument carries
+evidence from the trusted side, and a producer must pass it for every new
+record of these two kinds. A call without it returns UNCHECKED: the failure is
+neither charged to the program nor declared infrastructure on the strength of
+a claim.
 """
 from __future__ import annotations
 
@@ -60,6 +70,21 @@ class TimeoutOrigin(str, Enum):
     UNRESOLVED = "unresolved"
 
 
+class FaultOrigin(str, Enum):
+    """Origin of a fault of the verifier host, established by the trusted side.
+
+    The verifier host runs outside the sandbox that executes the submitted
+    program. ``TRUSTED_RUNNER`` means the trusted side established that the
+    fault arose in the verifier host or its runner, so the fault is not the
+    program's. ``CANDIDATE`` means the evidence points to the program.
+    ``UNRESOLVED`` means there is no evidence.
+    """
+
+    CANDIDATE = "candidate"
+    TRUSTED_RUNNER = "trusted_runner"
+    UNRESOLVED = "unresolved"
+
+
 class CascadeLayer(str, Enum):
     """The producer's cascade layer names (the verifier's cascade layers).
 
@@ -76,6 +101,7 @@ class CascadeLayer(str, Enum):
     L5_DATA_PERTURBATION = "L5_data_perturbation"
     L5B_PREDICTOR_CONNECTIVITY = "L5b_predictor_connectivity"
     L6_HOLDOUT_ELPD = "L6_holdout_elpd"
+    L6B_PREDICTIVE_REDUCER = "L6b_predictive_reducer"
 
 
 # A policy refusal is its own row kind: it names no
@@ -91,6 +117,26 @@ _STRUCTURAL_LAYERS = (
     CascadeLayer.L3_HARBOR_PYMC_STRICT_PROFILE.value,
     CascadeLayer.L4_EXPLOIT_HEURISTICS.value,
     CascadeLayer.L5_DATA_PERTURBATION.value,
+)
+
+# The reason codes whose side depends on who established the cause. A submitted
+# program can write the first two into its own record, so the rows that such a
+# record names floor as the program's failure. The next two come from the checks
+# of the task data and the reward reference made before scoring; their rows also
+# answer the program's failure unless the trusted side says otherwise. The last
+# four are raised by the verifier host. For all eight, ``fault_origin`` carries
+# the trusted side's evidence.
+_ORIGIN_DECIDED_REASON_CODES = frozenset(
+    {
+        "verifier_resource_failure",
+        "verifier_execution_unresolved",
+        "task_data_invalid",
+        "invalid_reward_reference",
+        "compiler_unavailable",
+        "task_data_mismatch",
+        "invalid_reward_declaration",
+        "reducer_environment_mismatch",
+    }
 )
 
 # The total table: (failed_layer, status, reason_code) -> Attribution. It is
@@ -206,7 +252,6 @@ ATTRIBUTION_TABLE: dict[tuple[str | None, str | None, str | None], Attribution] 
     ("L4_exploit_heuristics", None, "failure_origin_unresolved"): Attribution.UNCHECKED,
     ("L5_data_perturbation", None, "verifier_resource_failure"): Attribution.CANDIDATE,
     ("L5_data_perturbation", None, "verifier_timeout"): Attribution.UNCHECKED,
-    ("L5_data_perturbation", None, "l5_point_logps_unassessed"): Attribution.CANDIDATE,
     ("L6_holdout_elpd", VerdictStatus.NONFINITE.value, "heldout_loglik_nonfinite"): Attribution.CANDIDATE,
     ("L6_holdout_elpd", VerdictStatus.DENSITY_GATE_FAILED.value, "min_predictive_scale"): Attribution.CANDIDATE,
     ("L6_holdout_elpd", VerdictStatus.ISOLATION_FAILED.value, "verifier_contract_failure"): Attribution.CANDIDATE,
@@ -221,11 +266,7 @@ ATTRIBUTION_TABLE: dict[tuple[str | None, str | None, str | None], Attribution] 
     # producer's remaining emission sites. Each binding/refusal code is the
     # program's own fault (a floor); the semantic harness's machinery rows are
     # UNCHECKED (masked and counted, a defect to resolve).
-    ("L5_data_perturbation", None, "target_observed_more_than_once"): Attribution.CANDIDATE,
-    ("L5_data_perturbation", None, "target_not_row_bound"): Attribution.CANDIDATE,
-    ("L5_data_perturbation", None, "auxiliary_depends_on_target"): Attribution.CANDIDATE,
     ("L5b_predictor_connectivity", None, "L5b_predictor_connectivity"): Attribution.CANDIDATE,
-    ("L5b_predictor_connectivity", None, "predictor_connectivity_failed"): Attribution.CANDIDATE,
     ("L5b_predictor_connectivity", None, "predictor_connectivity_unassessed"): Attribution.CANDIDATE,
     ("L5b_predictor_connectivity", None, "verifier_execution_failed"): Attribution.UNCHECKED,
     ("L5b_predictor_connectivity", None, "verifier_setup_failure"): Attribution.UNCHECKED,
@@ -247,6 +288,48 @@ ATTRIBUTION_TABLE: dict[tuple[str | None, str | None, str | None], Attribution] 
     ("L6_holdout_elpd", VerdictStatus.DENSITY_GATE_FAILED.value, "predictive_samples_nonfinite"): Attribution.CANDIDATE,
     ("L6_holdout_elpd", VerdictStatus.DENSITY_GATE_FAILED.value, "predictive_spread_nonfinite"): Attribution.CANDIDATE,
     ("L6_holdout_elpd", VerdictStatus.DENSITY_GATE_FAILED.value, "predictive_spread_unassessed"): Attribution.CANDIDATE,
+    # Failures that the verifier host observes in the submitted program, from
+    # outside the sandbox that runs it. A source that is missing or refused, a
+    # compile error or limit, a run limit and a rejected packet are the
+    # program's own failures.
+    ("L0_parse", None, "submission_missing"): Attribution.CANDIDATE,
+    ("L1_ast_safety", None, "submission_refused"): Attribution.CANDIDATE,
+    ("L2_model_build", None, "compile_failed"): Attribution.CANDIDATE,
+    ("L2_model_build", None, "compile_timeout"): Attribution.CANDIDATE,
+    ("L2_model_build", None, "compile_resources"): Attribution.CANDIDATE,
+    ("L3_harbor_pymc_strict_profile", None, "timeout"): Attribution.CANDIDATE,
+    ("L3_harbor_pymc_strict_profile", None, "memory_limit"): Attribution.CANDIDATE,
+    ("L3_harbor_pymc_strict_profile", None, "packet_too_large"): Attribution.CANDIDATE,
+    ("L3_harbor_pymc_strict_profile", None, "packet_rejected"): Attribution.CANDIDATE,
+    # Predictions that the scoring of the held-out rows refuses: a value
+    # outside the response's support, a non-finite value, a wrong shape or a
+    # non-numeric value. Each is the program's own failure.
+    ("L6_holdout_elpd", None, "off_support"): Attribution.CANDIDATE,
+    ("L6_holdout_elpd", None, "nonfinite"): Attribution.CANDIDATE,
+    ("L6_holdout_elpd", None, "wrong_shape"): Attribution.CANDIDATE,
+    ("L6_holdout_elpd", None, "non_numeric"): Attribution.CANDIDATE,
+    # Faults of the verifier host itself, recorded as unjudged under triples of
+    # their own, apart from the rows of the same reasons that a program's own
+    # record can name (which answer the program's failure). Without origin
+    # evidence the side is unknown, so each row is UNCHECKED (masked, logged
+    # and counted as a defect to resolve). ``fault_origin`` (or
+    # ``timeout_origin`` for a timeout) supplies the evidence, and only the
+    # trusted side's evidence makes the fault ours.
+    ("L0_parse", VerdictStatus.UNJUDGED.value, "verifier_resource_failure"): Attribution.UNCHECKED,
+    ("L2_model_build", VerdictStatus.UNJUDGED.value, "verifier_resource_failure"): Attribution.UNCHECKED,
+    ("L3_harbor_pymc_strict_profile", VerdictStatus.UNJUDGED.value, "verifier_resource_failure"): Attribution.UNCHECKED,
+    ("L2_model_build", VerdictStatus.UNJUDGED.value, "verifier_timeout"): Attribution.UNCHECKED,
+    ("L3_harbor_pymc_strict_profile", VerdictStatus.UNJUDGED.value, "verifier_timeout"): Attribution.UNCHECKED,
+    ("L3_harbor_pymc_strict_profile", VerdictStatus.UNJUDGED.value, "verifier_execution_unresolved"): Attribution.UNCHECKED,
+    ("L2_model_build", VerdictStatus.UNJUDGED.value, "compiler_unavailable"): Attribution.UNCHECKED,
+    ("L2_model_build", VerdictStatus.UNJUDGED.value, "task_data_mismatch"): Attribution.UNCHECKED,
+    ("L6_holdout_elpd", VerdictStatus.UNJUDGED.value, "invalid_reward_declaration"): Attribution.UNCHECKED,
+    # The trusted reducer, which turns the program's packet into the predictive
+    # score after the program has ended.
+    ("L6b_predictive_reducer", VerdictStatus.UNJUDGED.value, "verifier_resource_failure"): Attribution.UNCHECKED,
+    ("L6b_predictive_reducer", VerdictStatus.UNJUDGED.value, "verifier_timeout"): Attribution.UNCHECKED,
+    ("L6b_predictive_reducer", VerdictStatus.UNJUDGED.value, "reducer_environment_mismatch"): Attribution.UNCHECKED,
+    ("L6b_predictive_reducer", VerdictStatus.UNJUDGED.value, "verifier_execution_unresolved"): Attribution.UNCHECKED,
 }
 
 
@@ -256,6 +339,7 @@ def attribution_for(
     reason_code: str | None,
     *,
     timeout_origin: TimeoutOrigin | str | None = None,
+    fault_origin: FaultOrigin | str | None = None,
 ) -> Attribution:
     """The attribution of one producer triple.
 
@@ -263,11 +347,26 @@ def attribution_for(
     producer change that adds a reason must add its table row first. Timeout
     origin must come from the trusted runner, not the candidate's output.
 
-    A producer passes ``timeout_origin`` for every new record whose reason is
+    A producer must pass ``timeout_origin`` for every new record whose reason is
     ``verifier_timeout``. ``candidate`` makes the timeout the program's failure;
     ``runner_deadline`` and ``runner_kill`` make it an infrastructure failure.
     A record without an origin reads ``UNCHECKED``: the row is masked like an
     infrastructure failure, and its count is logged as a defect to resolve.
+
+    A producer must pass ``fault_origin`` for every new record whose reason is one of
+    ``verifier_resource_failure``, ``verifier_execution_unresolved``,
+    ``task_data_invalid``, ``invalid_reward_reference``,
+    ``compiler_unavailable``, ``task_data_mismatch``,
+    ``invalid_reward_declaration`` and ``reducer_environment_mismatch``.
+    ``trusted_runner`` makes the fault an infrastructure failure and
+    ``candidate`` makes it the program's. ``unresolved`` or no origin returns
+    the table row. The rows for faults of the verifier host answer
+    ``UNCHECKED`` (never the program's). The rows of the same reasons that a
+    submitted program can write into its own record answer the program's
+    failure. Other reasons do not use ``fault_origin`` to decide, so evidence
+    about one kind of fault never masks another. The value is checked on every
+    call: an origin that is not a ``FaultOrigin`` value raises ``ValueError``,
+    whatever the reason.
     """
     key = (failed_layer, status, reason_code)
     try:
@@ -277,6 +376,17 @@ def attribution_for(
             f"no attribution row for the producer triple {key!r}; "
             "a producer change that adds a reason must add its table row"
         ) from None
+    fault = (
+        FaultOrigin(fault_origin)
+        if fault_origin is not None
+        else FaultOrigin.UNRESOLVED
+    )
+    if reason_code in _ORIGIN_DECIDED_REASON_CODES:
+        if fault is FaultOrigin.TRUSTED_RUNNER:
+            return Attribution.INFRASTRUCTURE
+        if fault is FaultOrigin.CANDIDATE:
+            return Attribution.CANDIDATE
+        return attribution
     if reason_code != "verifier_timeout":
         return attribution
     origin = (
